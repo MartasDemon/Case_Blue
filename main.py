@@ -2,12 +2,15 @@ import pygame
 import math
 import random
 import os
+import cv2
+import numpy as np
 from game_objects import InfantryUnit, TankUnit, Tile, TERRAIN_TYPES, TERRAIN_COLORS
 from pygame import mixer
 
 # === CONFIGURATION ===
 IMAGE_PATHS = {
-    "ger_infantry": "images/geônk1.jpg"
+    "ger_infantry": ["images/ger_infantry1.jpg", "images/ger_infantry2.jpg"],
+    "ger_tank": "images/ger_stug1.jpg"
 }
 
 # === UI CONSTANTS ===
@@ -58,11 +61,26 @@ pygame.display.set_caption("Hex Strategy Game")
 font = pygame.font.SysFont(None, 24)
 clock = pygame.time.Clock()
 
+# === LOAD IMAGES ===
+images = {}
+for key, paths in IMAGE_PATHS.items():
+    if isinstance(paths, list):
+        # For infantry, randomly choose one of the two images
+        path = random.choice(paths)
+    else:
+        path = paths
+        
+    if os.path.exists(path):
+        img = pygame.image.load(path)
+        img = pygame.transform.scale(img, (200, 150))
+        images[key] = img
+    else:
+        print(f"Missing image: {path}")
+
 # Create a simple gradient background
 def create_gradient_background():
     background = pygame.Surface((screen_width, screen_height))
     for y in range(screen_height):
-        # Create a dark blue to black gradient
         color = (0, 0, int(50 * (1 - y/screen_height)))
         pygame.draw.line(background, color, (0, y), (screen_width, y))
     return background
@@ -70,15 +88,110 @@ def create_gradient_background():
 # Create the background
 background = create_gradient_background()
 
-# === LOAD IMAGES ===
-images = {}
-for key, path in IMAGE_PATHS.items():
-    if os.path.exists(path):
-        img = pygame.image.load(path)
-        img = pygame.transform.scale(img, (200, 150))
-        images[key] = img
-    else:
-        print(f"Missing image: {path}")
+# Video background setup
+class VideoBackground:
+    def __init__(self, video_path):
+        try:
+            self.cap = cv2.VideoCapture(video_path)
+            if not self.cap.isOpened():
+                print(f"Error: Could not open video file {video_path}")
+                self.cap = None
+                return
+
+            # Get video properties
+            self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.frame_delay = 1000 / self.fps  # Delay in milliseconds
+            self.last_frame_time = pygame.time.get_ticks()
+            
+            # Get video dimensions
+            width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            
+            # Create a surface for the video frame
+            self.frame_surface = pygame.Surface((screen_width, screen_height))
+            
+            # Try multiple audio file formats
+            audio_formats = ['.wav', '.mp3', '.ogg']
+            audio_loaded = False
+            
+            for audio_format in audio_formats:
+                audio_path = video_path.replace('.mp4', audio_format)
+                if os.path.exists(audio_path):
+                    try:
+                        pygame.mixer.music.load(audio_path)
+                        pygame.mixer.music.set_volume(0.7)  # Set volume to 70%
+                        pygame.mixer.music.play(-1)  # -1 means loop indefinitely
+                        audio_loaded = True
+                        print(f"Successfully loaded audio from {audio_path}")
+                        break
+                    except Exception as e:
+                        print(f"Warning: Could not load audio file {audio_path}: {e}")
+            
+            if not audio_loaded:
+                print("Warning: No audio file found or could not be loaded")
+                
+        except Exception as e:
+            print(f"Error initializing video background: {e}")
+            self.cap = None
+    
+    def get_frame(self):
+        if self.cap is None:
+            return background
+            
+        try:
+            # Check if it's time for the next frame
+            current_time = pygame.time.get_ticks()
+            if current_time - self.last_frame_time < self.frame_delay:
+                return self.frame_surface  # Return the last frame if not enough time has passed
+            
+            self.last_frame_time = current_time
+            
+            ret, frame = self.cap.read()
+            if not ret:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = self.cap.read()
+                if not ret:
+                    return background
+            
+            # Convert frame to RGB (OpenCV uses BGR)
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # Resize frame to screen dimensions while maintaining aspect ratio
+            h, w = frame.shape[:2]
+            aspect = w / h
+            if aspect > screen_width / screen_height:
+                new_w = screen_width
+                new_h = int(new_w / aspect)
+            else:
+                new_h = screen_height
+                new_w = int(new_h * aspect)
+            
+            frame = cv2.resize(frame, (new_w, new_h))
+            
+            # Create a black background
+            self.frame_surface.fill((0, 0, 0))
+            
+            # Calculate position to center the frame
+            x = (screen_width - new_w) // 2
+            y = (screen_height - new_h) // 2
+            
+            # Convert to pygame surface and blit centered
+            frame_surface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+            self.frame_surface.blit(frame_surface, (x, y))
+            
+            return self.frame_surface
+        except Exception as e:
+            print(f"Error getting video frame: {e}")
+            return background
+
+# Initialize video background
+video_path = os.path.join('video', 'intro.mp4')
+if os.path.exists(video_path):
+    video_bg = VideoBackground(video_path)
+else:
+    print(f"Warning: Video file not found at {video_path}")
+    video_bg = None
 
 # === MAP GENERATION ===
 MAP_RADIUS = 6
@@ -152,6 +265,24 @@ mission_buttons = [
 settings_buttons = [
     ("Back", (screen_width//2-100, screen_height//2+80, 200, 40)),
 ]
+
+# === MISSION DATA ===
+MISSIONS = {
+    0: {
+        "name": "Operation Case Blue - Mission 1",
+        "date": "June 28, 1942",
+        "description": "Initial assault on the Soviet positions. Secure the forward positions and establish a foothold.",
+        "player_pos": (0, 0),
+        "tank_pos": (1, 0)
+    },
+    1: {
+        "name": "Operation Case Blue - Mission 2",
+        "date": "July 1, 1942",
+        "description": "Advance through enemy territory. Capture key strategic positions and eliminate enemy resistance.",
+        "player_pos": (-2, 2),
+        "tank_pos": (-1, 2)
+    }
+}
 
 # === DRAW FUNCTIONS ===
 def draw_hex(q, r, color, size, surface, border_color=(0, 0, 0)):
@@ -293,9 +424,13 @@ def handle_menu_click(pos):
 def draw_unit_info(unit):
     panel_height = 150
     pygame.draw.rect(screen, (30, 30, 30), (0, screen_height - panel_height, screen_width, panel_height))
-    if unit.image_key in images:
-        screen.blit(images[unit.image_key], (20, screen_height - panel_height + 10))
     
+    # Draw unit image
+    image_key = "ger_infantry" if isinstance(unit, InfantryUnit) else "ger_tank"
+    if image_key in images:
+        screen.blit(images[image_key], (20, screen_height - panel_height + 10))
+    
+    # Draw unit status
     status_messages = unit.get_status_report()
     for i, line in enumerate(status_messages):
         text = font.render(line, True, (255, 255, 255))
@@ -534,8 +669,11 @@ def ai_turn():
 
 # === MENU FUNCTIONS ===
 def draw_menu():
-    # Draw gradient background
-    screen.blit(background, (0, 0))
+    # Draw background
+    if video_bg and video_bg.cap is not None:
+        screen.blit(video_bg.get_frame(), (0, 0))
+    else:
+        screen.blit(background, (0, 0))
     
     # Draw menu overlay
     overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
@@ -543,7 +681,7 @@ def draw_menu():
     screen.blit(overlay, (0,0))
     
     # Draw title
-    title = font.render("Hex Strategy Game", True, (255,255,255))
+    title = font.render("Operation Case Blue", True, (255,255,255))
     screen.blit(title, (screen_width//2-title.get_width()//2, 100))
     
     # Draw buttons
@@ -554,8 +692,11 @@ def draw_menu():
         screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
 
 def draw_mission_select():
-    # Draw gradient background
-    screen.blit(background, (0, 0))
+    # Draw background
+    if video_bg and video_bg.cap is not None:
+        screen.blit(video_bg.get_frame(), (0, 0))
+    else:
+        screen.blit(background, (0, 0))
     
     # Draw menu overlay
     overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
@@ -565,15 +706,90 @@ def draw_mission_select():
     title = font.render("Select Mission", True, (255,255,255))
     screen.blit(title, (screen_width//2-title.get_width()//2, 100))
     
-    for text, rect in mission_buttons:
-        pygame.draw.rect(screen, (60,60,80), rect)
-        pygame.draw.rect(screen, (255,255,255), rect, 2)
-        btn_text = font.render(text, True, (255,255,255))
-        screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+    # Get mouse position for hover detection
+    mouse_pos = pygame.mouse.get_pos()
+    hovered_mission = None
+    
+    # Draw mission buttons and check for hover
+    for i, (text, rect) in enumerate(mission_buttons):
+        if text != "Back":  # Skip the back button
+            mission_id = i
+            r = pygame.Rect(rect)
+            is_hovered = r.collidepoint(mouse_pos)
+            
+            # Draw button with hover effect
+            color = (80, 80, 100) if is_hovered else (60, 60, 80)
+            pygame.draw.rect(screen, color, rect)
+            pygame.draw.rect(screen, (255, 255, 255), rect, 2)
+            
+            # Draw mission name
+            btn_text = font.render(text, True, (255, 255, 255))
+            screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+            
+            if is_hovered:
+                hovered_mission = mission_id
+        else:
+            # Draw back button normally
+            pygame.draw.rect(screen, (60, 60, 80), rect)
+            pygame.draw.rect(screen, (255, 255, 255), rect, 2)
+            btn_text = font.render(text, True, (255, 255, 255))
+            screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+    
+    # Draw mission info window if hovering over a mission
+    if hovered_mission is not None:
+        mission = MISSIONS[hovered_mission]
+        
+        # Create info window
+        info_width = 400
+        info_height = 200
+        info_x = screen_width - info_width - 50
+        info_y = 150
+        
+        # Draw window background
+        info_surface = pygame.Surface((info_width, info_height), pygame.SRCALPHA)
+        info_surface.fill((0, 0, 0, 200))
+        pygame.draw.rect(info_surface, (255, 255, 255), (0, 0, info_width, info_height), 2)
+        
+        # Draw mission info
+        title_font = pygame.font.SysFont(None, 32)
+        date_font = pygame.font.SysFont(None, 24)
+        desc_font = pygame.font.SysFont(None, 20)
+        
+        # Draw title
+        title_text = title_font.render(mission["name"], True, (255, 255, 255))
+        info_surface.blit(title_text, (20, 20))
+        
+        # Draw date
+        date_text = date_font.render(mission["date"], True, (200, 200, 200))
+        info_surface.blit(date_text, (20, 60))
+        
+        # Draw description (wrapped text)
+        words = mission["description"].split()
+        lines = []
+        current_line = []
+        for word in words:
+            current_line.append(word)
+            text = " ".join(current_line)
+            if desc_font.size(text)[0] > info_width - 40:
+                current_line.pop()
+                lines.append(" ".join(current_line))
+                current_line = [word]
+        if current_line:
+            lines.append(" ".join(current_line))
+        
+        for i, line in enumerate(lines):
+            desc_text = desc_font.render(line, True, (200, 200, 200))
+            info_surface.blit(desc_text, (20, 100 + i * 25))
+        
+        # Draw the info window
+        screen.blit(info_surface, (info_x, info_y))
 
 def draw_settings():
-    # Draw gradient background
-    screen.blit(background, (0, 0))
+    # Draw background
+    if video_bg and video_bg.cap is not None:
+        screen.blit(video_bg.get_frame(), (0, 0))
+    else:
+        screen.blit(background, (0, 0))
     
     # Draw menu overlay
     overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
@@ -592,55 +808,47 @@ def draw_settings():
 # --- Mission setup logic ---
 def setup_mission(mission_id):
     global tile_map, units, enemy_units, player_unit, tank_unit, selected_unit, action_menu_active, action_menu_pos, waiting_for_target, current_action, camera_offset_x, camera_offset_y, hex_size
+    
+    # Stop the menu music
+    pygame.mixer.music.stop()
+    
     # Reset all state
     hex_size = base_hex_size
     tile_map = {}
     units = []
     enemy_units = []
-    # Mission 1: default spawn
-    if mission_id == 0:
-        for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
-            for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
-                if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
-                    terrain = random.choice(TERRAIN_TYPES)
-                    tile_map[(q, r)] = Tile(q, r, terrain)
-        player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
-        player_unit.q, player_unit.r = 0, 0
-        tile_map[(0, 0)].unit = player_unit
-        units.append(player_unit)
-        tank_unit = TankUnit("German Tank", 200, 40, 80, 3, 5, "ger_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
-        tank_unit.q, tank_unit.r = 1, 0
-        tile_map[(1, 0)].unit = tank_unit
-        units.append(tank_unit)
-        enemy_unit = InfantryUnit("Russian Infantry", 100, 20, 60, 4, 10, "ger_infantry", range_=1, is_enemy=True)
-        for (q, r), tile in tile_map.items():
-            if tile.unit is None and abs(q) + abs(r) > 8:
-                tile.unit = enemy_unit
-                enemy_unit.q, enemy_unit.r = q, r
-                enemy_units.append(enemy_unit)
-                break
-    # Mission 2: different spawn
-    elif mission_id == 1:
-        for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
-            for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
-                if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
-                    terrain = random.choice(TERRAIN_TYPES)
-                    tile_map[(q, r)] = Tile(q, r, terrain)
-        player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
-        player_unit.q, player_unit.r = -2, 2
-        tile_map[(-2, 2)].unit = player_unit
-        units.append(player_unit)
-        tank_unit = TankUnit("German Tank", 200, 40, 80, 3, 5, "ger_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
-        tank_unit.q, tank_unit.r = -1, 2
-        tile_map[(-1, 2)].unit = tank_unit
-        units.append(tank_unit)
-        enemy_unit = InfantryUnit("Russian Infantry", 100, 20, 60, 4, 10, "ger_infantry", range_=1, is_enemy=True)
-        for (q, r), tile in tile_map.items():
-            if tile.unit is None and abs(q) + abs(r) > 8:
-                tile.unit = enemy_unit
-                enemy_unit.q, enemy_unit.r = q, r
-                enemy_units.append(enemy_unit)
-                break
+    
+    # Get mission data
+    mission = MISSIONS[mission_id]
+    
+    # Create map
+    for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
+        for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
+            if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
+                terrain = random.choice(TERRAIN_TYPES)
+                tile_map[(q, r)] = Tile(q, r, terrain)
+    
+    # Place player units
+    player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
+    player_unit.q, player_unit.r = mission["player_pos"]
+    tile_map[mission["player_pos"]].unit = player_unit
+    units.append(player_unit)
+    
+    tank_unit = TankUnit("German Tank", 200, 40, 80, 3, 5, "ger_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
+    tank_unit.q, tank_unit.r = mission["tank_pos"]
+    tile_map[mission["tank_pos"]].unit = tank_unit
+    units.append(tank_unit)
+    
+    # Place enemy unit
+    enemy_unit = InfantryUnit("Russian Infantry", 100, 20, 60, 4, 10, "ger_infantry", range_=1, is_enemy=True)
+    for (q, r), tile in tile_map.items():
+        if tile.unit is None and abs(q) + abs(r) > 8:
+            tile.unit = enemy_unit
+            enemy_unit.q, enemy_unit.r = q, r
+            enemy_units.append(enemy_unit)
+            break
+    
+    # Reset game state
     selected_unit = None
     action_menu_active = False
     action_menu_pos = None
