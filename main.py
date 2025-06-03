@@ -3,6 +3,7 @@ import math
 import random
 import os
 from game_objects import InfantryUnit, TankUnit, Tile, TERRAIN_TYPES, TERRAIN_COLORS
+from pygame import mixer
 
 # === CONFIGURATION ===
 IMAGE_PATHS = {
@@ -50,11 +51,24 @@ def get_neighbors(q, r):
 
 # === INIT PYGAME ===
 pygame.init()
+mixer.init()
 screen_width, screen_height = 1280, 720
 screen = pygame.display.set_mode((screen_width, screen_height))
 pygame.display.set_caption("Hex Strategy Game")
 font = pygame.font.SysFont(None, 24)
 clock = pygame.time.Clock()
+
+# Create a simple gradient background
+def create_gradient_background():
+    background = pygame.Surface((screen_width, screen_height))
+    for y in range(screen_height):
+        # Create a dark blue to black gradient
+        color = (0, 0, int(50 * (1 - y/screen_height)))
+        pygame.draw.line(background, color, (0, y), (screen_width, y))
+    return background
+
+# Create the background
+background = create_gradient_background()
 
 # === LOAD IMAGES ===
 images = {}
@@ -115,6 +129,29 @@ drag_start_pos = (0, 0)
 camera_start_offset = (camera_offset_x, camera_offset_y)
 
 min_hex_size, max_hex_size = 20, 80
+
+# === MENU & MISSION SYSTEM ===
+MENU_STATE_MAIN = 0
+MENU_STATE_MISSION_SELECT = 1
+MENU_STATE_SETTINGS = 2
+MENU_STATE_GAME = 3
+menu_state = MENU_STATE_MAIN
+selected_mission = 0
+
+# Menu button positions
+menu_buttons = [
+    ("Select Mission", (screen_width//2-100, screen_height//2-60, 200, 50)),
+    ("Settings", (screen_width//2-100, screen_height//2, 200, 50)),
+    ("Quit", (screen_width//2-100, screen_height//2+60, 200, 50)),
+]
+mission_buttons = [
+    ("Mission 1", (screen_width//2-100, screen_height//2-40, 200, 50)),
+    ("Mission 2", (screen_width//2-100, screen_height//2+20, 200, 50)),
+    ("Back", (screen_width//2-100, screen_height//2+80, 200, 40)),
+]
+settings_buttons = [
+    ("Back", (screen_width//2-100, screen_height//2+80, 200, 40)),
+]
 
 # === DRAW FUNCTIONS ===
 def draw_hex(q, r, color, size, surface, border_color=(0, 0, 0)):
@@ -495,84 +532,245 @@ def ai_turn():
             if not moved:
                 break
 
+# === MENU FUNCTIONS ===
+def draw_menu():
+    # Draw gradient background
+    screen.blit(background, (0, 0))
+    
+    # Draw menu overlay
+    overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
+    overlay.fill((0,0,0,120))
+    screen.blit(overlay, (0,0))
+    
+    # Draw title
+    title = font.render("Hex Strategy Game", True, (255,255,255))
+    screen.blit(title, (screen_width//2-title.get_width()//2, 100))
+    
+    # Draw buttons
+    for text, rect in menu_buttons:
+        pygame.draw.rect(screen, (60,60,80), rect)
+        pygame.draw.rect(screen, (255,255,255), rect, 2)
+        btn_text = font.render(text, True, (255,255,255))
+        screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+
+def draw_mission_select():
+    # Draw gradient background
+    screen.blit(background, (0, 0))
+    
+    # Draw menu overlay
+    overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
+    overlay.fill((0,0,0,120))
+    screen.blit(overlay, (0,0))
+    
+    title = font.render("Select Mission", True, (255,255,255))
+    screen.blit(title, (screen_width//2-title.get_width()//2, 100))
+    
+    for text, rect in mission_buttons:
+        pygame.draw.rect(screen, (60,60,80), rect)
+        pygame.draw.rect(screen, (255,255,255), rect, 2)
+        btn_text = font.render(text, True, (255,255,255))
+        screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+
+def draw_settings():
+    # Draw gradient background
+    screen.blit(background, (0, 0))
+    
+    # Draw menu overlay
+    overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
+    overlay.fill((0,0,0,120))
+    screen.blit(overlay, (0,0))
+    
+    title = font.render("Settings (placeholder)", True, (255,255,255))
+    screen.blit(title, (screen_width//2-title.get_width()//2, 100))
+    
+    for text, rect in settings_buttons:
+        pygame.draw.rect(screen, (60,60,80), rect)
+        pygame.draw.rect(screen, (255,255,255), rect, 2)
+        btn_text = font.render(text, True, (255,255,255))
+        screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+
+# --- Mission setup logic ---
+def setup_mission(mission_id):
+    global tile_map, units, enemy_units, player_unit, tank_unit, selected_unit, action_menu_active, action_menu_pos, waiting_for_target, current_action, camera_offset_x, camera_offset_y, hex_size
+    # Reset all state
+    hex_size = base_hex_size
+    tile_map = {}
+    units = []
+    enemy_units = []
+    # Mission 1: default spawn
+    if mission_id == 0:
+        for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
+            for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
+                if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
+                    terrain = random.choice(TERRAIN_TYPES)
+                    tile_map[(q, r)] = Tile(q, r, terrain)
+        player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
+        player_unit.q, player_unit.r = 0, 0
+        tile_map[(0, 0)].unit = player_unit
+        units.append(player_unit)
+        tank_unit = TankUnit("German Tank", 200, 40, 80, 3, 5, "ger_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
+        tank_unit.q, tank_unit.r = 1, 0
+        tile_map[(1, 0)].unit = tank_unit
+        units.append(tank_unit)
+        enemy_unit = InfantryUnit("Russian Infantry", 100, 20, 60, 4, 10, "ger_infantry", range_=1, is_enemy=True)
+        for (q, r), tile in tile_map.items():
+            if tile.unit is None and abs(q) + abs(r) > 8:
+                tile.unit = enemy_unit
+                enemy_unit.q, enemy_unit.r = q, r
+                enemy_units.append(enemy_unit)
+                break
+    # Mission 2: different spawn
+    elif mission_id == 1:
+        for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
+            for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
+                if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
+                    terrain = random.choice(TERRAIN_TYPES)
+                    tile_map[(q, r)] = Tile(q, r, terrain)
+        player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
+        player_unit.q, player_unit.r = -2, 2
+        tile_map[(-2, 2)].unit = player_unit
+        units.append(player_unit)
+        tank_unit = TankUnit("German Tank", 200, 40, 80, 3, 5, "ger_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
+        tank_unit.q, tank_unit.r = -1, 2
+        tile_map[(-1, 2)].unit = tank_unit
+        units.append(tank_unit)
+        enemy_unit = InfantryUnit("Russian Infantry", 100, 20, 60, 4, 10, "ger_infantry", range_=1, is_enemy=True)
+        for (q, r), tile in tile_map.items():
+            if tile.unit is None and abs(q) + abs(r) > 8:
+                tile.unit = enemy_unit
+                enemy_unit.q, enemy_unit.r = q, r
+                enemy_units.append(enemy_unit)
+                break
+    selected_unit = None
+    action_menu_active = False
+    action_menu_pos = None
+    waiting_for_target = False
+    current_action = None
+    camera_offset_x, camera_offset_y = screen_width // 2, screen_height // 2 - 100
+
 # === MAIN LOOP ===
 running = True
 turn_player = True
+menu_state = MENU_STATE_MAIN
+selected_mission = 0
 
 while running:
-    screen.fill((10, 10, 20))
-    tile_rects = draw_map()
-
-    if selected_unit:
-        draw_unit_info(selected_unit)
-
-    draw_action_menu()
-    end_turn_btn = draw_end_turn_button()
-    pygame.display.flip()
-
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1:  # Left click
-                if end_turn_btn.collidepoint(event.pos):
-                    turn_player = not turn_player
+    if menu_state == MENU_STATE_MAIN:
+        draw_menu()
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                for i, (text, rect) in enumerate(menu_buttons):
+                    r = pygame.Rect(rect)
+                    if r.collidepoint(mx, my):
+                        if text == "Select Mission":
+                            menu_state = MENU_STATE_MISSION_SELECT
+                        elif text == "Settings":
+                            menu_state = MENU_STATE_SETTINGS
+                        elif text == "Quit":
+                            running = False
+    elif menu_state == MENU_STATE_MISSION_SELECT:
+        draw_mission_select()
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                for i, (text, rect) in enumerate(mission_buttons):
+                    r = pygame.Rect(rect)
+                    if r.collidepoint(mx, my):
+                        if text == "Mission 1":
+                            selected_mission = 0
+                            setup_mission(0)
+                            menu_state = MENU_STATE_GAME
+                        elif text == "Mission 2":
+                            selected_mission = 1
+                            setup_mission(1)
+                            menu_state = MENU_STATE_GAME
+                        elif text == "Back":
+                            menu_state = MENU_STATE_MAIN
+    elif menu_state == MENU_STATE_SETTINGS:
+        draw_settings()
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                for i, (text, rect) in enumerate(settings_buttons):
+                    r = pygame.Rect(rect)
+                    if r.collidepoint(mx, my):
+                        if text == "Back":
+                            menu_state = MENU_STATE_MAIN
+    elif menu_state == MENU_STATE_GAME:
+        screen.fill((10, 10, 20))
+        tile_rects = draw_map()
+        if selected_unit:
+            draw_unit_info(selected_unit)
+        draw_action_menu()
+        end_turn_btn = draw_end_turn_button()
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left click
+                    if end_turn_btn.collidepoint(event.pos):
+                        turn_player = not turn_player
+                        if turn_player:
+                            for unit in units:
+                                unit.agility_points = unit.base_agility
+                                unit.accuracy = unit.base_accuracy
+                                unit.smoke_affected = False
+                            # Update smoke duration
+                            for tile in tile_map.values():
+                                if tile.smoke:
+                                    tile.smoke_turns -= 1
+                                    if tile.smoke_turns <= 0:
+                                        tile.smoke = False
+                        else:
+                            ai_turn()
+                    elif turn_player:
+                        if action_menu_active:
+                            if handle_menu_click(event.pos):
+                                continue
+                            action_menu_active = False
+                        handle_tile_click(event.pos, tile_rects)
+                    # Start dragging for map
+                    dragging = True
+                    drag_start_pos = event.pos
+                    camera_start_offset = (camera_offset_x, camera_offset_y)
+                elif event.button == 3:  # Right click
                     if turn_player:
-                        for unit in units:
-                            unit.agility_points = unit.base_agility
-                            unit.accuracy = unit.base_accuracy
-                            unit.smoke_affected = False
-                        # Update smoke duration
-                        for tile in tile_map.values():
-                            if tile.smoke:
-                                tile.smoke_turns -= 1
-                                if tile.smoke_turns <= 0:
-                                    tile.smoke = False
-                    else:
-                        ai_turn()
-                elif turn_player:
-                    if action_menu_active:
-                        if handle_menu_click(event.pos):
-                            continue
-                        action_menu_active = False
-                    handle_tile_click(event.pos, tile_rects)
-                # Start dragging for map
-                dragging = True
-                drag_start_pos = event.pos
-                camera_start_offset = (camera_offset_x, camera_offset_y)
-            
-            elif event.button == 3:  # Right click
-                if turn_player:
-                    for (q, r), rect in tile_rects.items():
-                        if rect.collidepoint(event.pos):
-                            tile = tile_map[(q, r)]
-                            if tile.unit and not tile.unit.is_enemy:
-                                selected_unit = tile.unit
-                                action_menu_active = True
-                                action_menu_pos = event.pos
-                                break
-                    else:
-                        # If clicked outside a unit, close the menu
-                        action_menu_active = False
-                        action_menu_pos = None
-
-            elif event.button == 4:  # Mouse wheel up - zoom in
-                hex_size = min(max_hex_size, hex_size + 2)
-            elif event.button == 5:  # Mouse wheel down - zoom out
-                hex_size = max(min_hex_size, hex_size - 2)
-
-        elif event.type == pygame.MOUSEBUTTONUP:
-            if event.button == 1:
-                dragging = False
-
-        elif event.type == pygame.MOUSEMOTION and dragging:
-            mx, my = event.pos
-            dx = mx - drag_start_pos[0]
-            dy = my - drag_start_pos[1]
-            camera_offset_x = camera_start_offset[0] + dx
-            camera_offset_y = camera_start_offset[1] + dy
-
-    clock.tick(60)
+                        for (q, r), rect in tile_rects.items():
+                            if rect.collidepoint(event.pos):
+                                tile = tile_map[(q, r)]
+                                if tile.unit and not tile.unit.is_enemy:
+                                    selected_unit = tile.unit
+                                    action_menu_active = True
+                                    action_menu_pos = event.pos
+                                    break
+                        else:
+                            # If clicked outside a unit, close the menu
+                            action_menu_active = False
+                            action_menu_pos = None
+                elif event.button == 4:  # Mouse wheel up - zoom in
+                    hex_size = min(max_hex_size, hex_size + 2)
+                elif event.button == 5:  # Mouse wheel down - zoom out
+                    hex_size = max(min_hex_size, hex_size - 2)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    dragging = False
+            elif event.type == pygame.MOUSEMOTION and dragging:
+                mx, my = event.pos
+                dx = mx - drag_start_pos[0]
+                dy = my - drag_start_pos[1]
+                camera_offset_x = camera_start_offset[0] + dx
+                camera_offset_y = camera_start_offset[1] + dy
+        clock.tick(60)
 
 pygame.quit()
