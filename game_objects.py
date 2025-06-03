@@ -9,7 +9,7 @@ TERRAIN_COLORS = {
     "Hill": (160, 130, 100)
 }
 
-class InfantryUnit:
+class Unit:
     def __init__(self, name, base_health, base_damage, base_morale, base_agility, base_soldiers, image_key, range_, is_enemy=False):
         self.name = name
         self.base_health = base_health
@@ -23,9 +23,16 @@ class InfantryUnit:
         self.range = range_
         self.selected = False
         self.is_enemy = is_enemy
+        self.base_accuracy = 80  # Base accuracy percentage
+        self.accuracy = self.base_accuracy
+        self.smoke_affected = False
+        self.grenades = 2  # Number of grenades available
+        self.smoke_grenades = 1  # Number of smoke grenades available
 
     def reset_turn(self):
         self.agility_points = self.base_agility
+        self.accuracy = self.base_accuracy
+        self.smoke_affected = False
 
     def is_adjacent(self, other_tile):
         dq = abs(self.q - other_tile.q)
@@ -33,12 +40,69 @@ class InfantryUnit:
         ds = abs(-self.q - self.r + other_tile.q + other_tile.r)
         return max(dq, dr, ds) == 1
 
+    def get_status_report(self):
+        morale_status = "High" if self.base_morale > 70 else "Medium" if self.base_morale > 40 else "Low"
+        health_status = "Good" if self.health > 70 else "Fair" if self.health > 40 else "Critical"
+        accuracy_status = "Excellent" if self.accuracy > 80 else "Good" if self.accuracy > 60 else "Poor"
+        
+        status_messages = [
+            f"Unit Status: {self.name}",
+            f"Health: {health_status} ({self.health}/{self.base_health})",
+            f"Morale: {morale_status}",
+            f"Accuracy: {accuracy_status}",
+            f"Remaining Actions: {self.agility_points}/{self.base_agility}",
+            f"Grenades: {self.grenades}",
+            f"Smoke Grenades: {self.smoke_grenades}"
+        ]
+        return status_messages
+
+class InfantryUnit(Unit):
+    def __init__(self, name, base_health, base_damage, base_morale, base_agility, base_soldiers, image_key, range_, is_enemy=False):
+        super().__init__(name, base_health, base_damage, base_morale, base_agility, base_soldiers, image_key, range_, is_enemy)
+        self.armor = 0  # Infantry has no armor
+        self.armor_penetration = 0  # Infantry has no armor penetration
+        self.base_accuracy = 80  # Infantry has good accuracy
+        self.accuracy = self.base_accuracy
+        self.range = 3  # Infantry can now engage at up to 3 hexes
+
+    def get_accuracy_at_range(self, distance):
+        # Accuracy decreases with range
+        if distance == 1:
+            return self.accuracy  # Full accuracy at point blank
+        elif distance == 2:
+            return self.accuracy * 0.8  # 20% penalty at medium range
+        else:
+            return self.accuracy * 0.6  # 40% penalty at long range
+
+class TankUnit(Unit):
+    def __init__(self, name, base_health, base_damage, base_morale, base_agility, base_soldiers, image_key, range_, armor, armor_penetration, is_enemy=False):
+        super().__init__(name, base_health, base_damage, base_morale, base_agility, base_soldiers, image_key, range_, is_enemy)
+        self.armor = armor
+        self.armor_penetration = armor_penetration
+        self.base_accuracy = 70  # Tanks have lower base accuracy
+        self.accuracy = self.base_accuracy
+        self.he_rounds = 5  # High Explosive rounds
+        self.aphe_rounds = 5  # Armor Piercing High Explosive rounds
+        self.range = 4  # Tanks have longer range
+
+    def get_status_report(self):
+        base_report = super().get_status_report()
+        base_report.extend([
+            f"Armor: {self.armor}",
+            f"Armor Penetration: {self.armor_penetration}",
+            f"HE Rounds: {self.he_rounds}",
+            f"APHE Rounds: {self.aphe_rounds}"
+        ])
+        return base_report
+
 class Tile:
     def __init__(self, q, r, terrain_type):
         self.q = q
         self.r = r
         self.terrain_type = terrain_type
         self.unit = None
+        self.smoke = False
+        self.smoke_turns = 0  # Track how many turns the smoke will last
 
         if terrain_type == "Plain":
             self.defense_bonus = 0
