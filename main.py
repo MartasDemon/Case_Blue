@@ -22,6 +22,9 @@ MENU_HOVER = (60, 60, 60)
 MENU_TEXT = (255, 255, 255)
 MENU_BORDER = (200, 200, 200)
 
+# === DISPLAY SETTINGS ===
+is_fullscreen = False
+
 # === HEX UTILS ===
 def hex_to_pixel(q, r, size):
     # Pointy topped hex coordinates
@@ -263,6 +266,7 @@ mission_buttons = [
     ("Back", (screen_width//2-100, screen_height//2+80, 200, 40)),
 ]
 settings_buttons = [
+    ("Toggle Fullscreen", (screen_width//2-100, screen_height//2-40, 200, 50)),
     ("Back", (screen_width//2-100, screen_height//2+80, 200, 40)),
 ]
 
@@ -330,10 +334,10 @@ def draw_action_menu():
                     menu_items.append("Fire APHE Round")
             else:
                 menu_items.append("Attack")
-        if selected_unit.grenades > 0 and selected_unit.agility_points >= 2:
-            menu_items.append("Throw Grenade")
-        if selected_unit.smoke_grenades > 0 and selected_unit.agility_points >= 2:
-            menu_items.append("Throw Smoke")
+                if selected_unit.grenades > 0:
+                    menu_items.append("Throw Grenade")
+                if selected_unit.smoke_grenades > 0:
+                    menu_items.append("Throw Smoke")
         menu_items.append("Status Report")
 
     if not menu_items:
@@ -442,6 +446,14 @@ def draw_end_turn_button():
     pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2)
     text = font.render("End Turn", True, (255, 255, 255))
     screen.blit(text, (btn_rect.x + 20, btn_rect.y + 10))
+    return btn_rect
+
+def draw_back_to_menu_button():
+    btn_rect = pygame.Rect(20, 20, 130, 40)
+    pygame.draw.rect(screen, (100, 100, 255), btn_rect)
+    pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2)
+    text = font.render("Back to Menu", True, (255, 255, 255))
+    screen.blit(text, (btn_rect.x + 10, btn_rect.y + 10))
     return btn_rect
 
 # === COMBAT FUNCTIONS ===
@@ -555,10 +567,12 @@ def handle_tile_click(pos, tile_rects):
             if rect.collidepoint(pos):
                 target_tile = tile_map[(q, r)]
                 if current_action == "grenade":
-                    if throw_grenade(selected_unit, target_tile):
-                        print(f"{selected_unit.name} throws a grenade!")
+                    if selected_unit.throw_grenade(target_tile):
+                        print(f"{selected_unit.name} throws a grenade at {target_tile.unit.name if target_tile.unit else 'empty space'}!")
                         waiting_for_target = False
                         current_action = None
+                    else:
+                        print(f"{selected_unit.name} cannot throw a grenade there!")
                 elif current_action == "smoke":
                     if throw_smoke(selected_unit, target_tile):
                         print(f"{selected_unit.name} throws a smoke grenade!")
@@ -599,15 +613,15 @@ def handle_tile_click(pos, tile_rects):
                 dist = max(abs(q - selected_unit.q), abs(r - selected_unit.r), 
                           abs((-selected_unit.q - selected_unit.r) - (-q - r)))
                 
-                if tile.unit is None and dist <= selected_unit.range and selected_unit.agility_points >= 1:
-                    # Move unit
+                if tile.unit is None and dist <= 1 and selected_unit.agility_points >= 1:
+                    # Move unit (1 AP = 1 hex movement)
                     tile_map[(selected_unit.q, selected_unit.r)].unit = None
                     selected_unit.q, selected_unit.r = q, r
                     selected_unit.agility_points -= 1
                     tile.unit = selected_unit
                     return
                 elif tile.unit and tile.unit != selected_unit and tile.unit.is_enemy != selected_unit.is_enemy:
-                    # Attack
+                    # Attack (range is for shooting only)
                     if dist <= selected_unit.range and selected_unit.agility_points >= 2:
                         damage = calculate_damage(selected_unit, tile.unit, tile, distance=dist)
                         if damage > 0:
@@ -796,8 +810,13 @@ def draw_settings():
     overlay.fill((0,0,0,120))
     screen.blit(overlay, (0,0))
     
-    title = font.render("Settings (placeholder)", True, (255,255,255))
+    title = font.render("Settings", True, (255,255,255))
     screen.blit(title, (screen_width//2-title.get_width()//2, 100))
+    
+    # Draw current display mode
+    mode_text = "Fullscreen" if is_fullscreen else "Windowed"
+    mode_display = font.render(f"Current Mode: {mode_text}", True, (255,255,255))
+    screen.blit(mode_display, (screen_width//2-mode_display.get_width()//2, 150))
     
     for text, rect in settings_buttons:
         pygame.draw.rect(screen, (60,60,80), rect)
@@ -856,6 +875,17 @@ def setup_mission(mission_id):
     current_action = None
     camera_offset_x, camera_offset_y = screen_width // 2, screen_height // 2 - 100
 
+def toggle_fullscreen():
+    global screen, is_fullscreen, screen_width, screen_height
+    is_fullscreen = not is_fullscreen
+    if is_fullscreen:
+        screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
+    else:
+        screen = pygame.display.set_mode((screen_width, screen_height))
+    # Recreate background for new screen size
+    global background
+    background = create_gradient_background()
+
 # === MAIN LOOP ===
 running = True
 turn_player = True
@@ -912,7 +942,9 @@ while running:
                 for i, (text, rect) in enumerate(settings_buttons):
                     r = pygame.Rect(rect)
                     if r.collidepoint(mx, my):
-                        if text == "Back":
+                        if text == "Toggle Fullscreen":
+                            toggle_fullscreen()
+                        elif text == "Back":
                             menu_state = MENU_STATE_MAIN
     elif menu_state == MENU_STATE_GAME:
         screen.fill((10, 10, 20))
@@ -921,13 +953,23 @@ while running:
             draw_unit_info(selected_unit)
         draw_action_menu()
         end_turn_btn = draw_end_turn_button()
+        back_btn = draw_back_to_menu_button()
         pygame.display.flip()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Left click
-                    if end_turn_btn.collidepoint(event.pos):
+                    if back_btn.collidepoint(event.pos):
+                        menu_state = MENU_STATE_MAIN
+                        # Reset game state
+                        selected_unit = None
+                        action_menu_active = False
+                        action_menu_pos = None
+                        waiting_for_target = False
+                        current_action = None
+                        continue
+                    elif end_turn_btn.collidepoint(event.pos):
                         turn_player = not turn_player
                         if turn_player:
                             for unit in units:

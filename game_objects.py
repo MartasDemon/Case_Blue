@@ -20,7 +20,7 @@ class Unit:
         self.agility_points = base_agility
         self.base_soldiers = base_soldiers
         self.image_key = image_key
-        self.range = range_
+        self.range = range_  # Range is now only for shooting
         self.selected = False
         self.is_enemy = is_enemy
         self.base_accuracy = 80  # Base accuracy percentage
@@ -28,6 +28,8 @@ class Unit:
         self.smoke_affected = False
         self.grenades = 2  # Number of grenades available
         self.smoke_grenades = 1  # Number of smoke grenades available
+        self.q = None  # Hex coordinates
+        self.r = None
 
     def reset_turn(self):
         self.agility_points = self.base_agility
@@ -40,6 +42,29 @@ class Unit:
         ds = abs(-self.q - self.r + other_tile.q + other_tile.r)
         return max(dq, dr, ds) == 1
 
+    def can_throw_grenade(self, target_tile):
+        # Check if unit has grenades and enough AP
+        if self.grenades <= 0 or self.agility_points < 2:
+            return False
+        # Check if target is adjacent
+        return self.is_adjacent(target_tile)
+
+    def throw_grenade(self, target_tile):
+        if not self.can_throw_grenade(target_tile):
+            return False
+        
+        # Deal damage to target tile's unit
+        if target_tile.unit:
+            damage = self.base_damage * 1.5  # Grenades deal 50% more damage
+            target_tile.unit.health -= int(damage)
+            if target_tile.unit.health <= 0:
+                target_tile.unit = None
+        
+        # Use up grenade and AP
+        self.grenades -= 1
+        self.agility_points -= 2
+        return True
+
     def get_status_report(self):
         morale_status = "High" if self.base_morale > 70 else "Medium" if self.base_morale > 40 else "Low"
         health_status = "Good" if self.health > 70 else "Fair" if self.health > 40 else "Critical"
@@ -51,9 +76,17 @@ class Unit:
             f"Morale: {morale_status}",
             f"Accuracy: {accuracy_status}",
             f"Remaining Actions: {self.agility_points}/{self.base_agility}",
-            f"Grenades: {self.grenades}",
-            f"Smoke Grenades: {self.smoke_grenades}"
+            f"Movement Range: 1 hex per AP",
+            f"Combat Range: {self.range} hexes"
         ]
+        
+        # Only add grenade info for infantry
+        if not isinstance(self, TankUnit):
+            status_messages.extend([
+                f"Grenades: {self.grenades}",
+                f"Smoke Grenades: {self.smoke_grenades}"
+            ])
+            
         return status_messages
 
 class InfantryUnit(Unit):
@@ -63,7 +96,7 @@ class InfantryUnit(Unit):
         self.armor_penetration = 0  # Infantry has no armor penetration
         self.base_accuracy = 80  # Infantry has good accuracy
         self.accuracy = self.base_accuracy
-        self.range = 3  # Infantry can now engage at up to 3 hexes
+        self.range = 3  # Infantry can engage at up to 3 hexes
 
     def get_accuracy_at_range(self, distance):
         # Accuracy decreases with range
@@ -84,6 +117,9 @@ class TankUnit(Unit):
         self.he_rounds = 5  # High Explosive rounds
         self.aphe_rounds = 5  # Armor Piercing High Explosive rounds
         self.range = 4  # Tanks have longer range
+        # Remove grenades and smoke grenades for tanks
+        self.grenades = 0
+        self.smoke_grenades = 0
 
     def get_status_report(self):
         base_report = super().get_status_report()
