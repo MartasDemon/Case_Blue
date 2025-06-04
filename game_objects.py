@@ -9,6 +9,10 @@ TERRAIN_COLORS = {
     "Hill": (160, 130, 100)
 }
 
+def get_neighbors(q, r):
+    directions = [(+1, 0), (+1, -1), (0, -1), (-1, 0), (-1, +1), (0, +1)]
+    return [(q + dq, r + dr) for dq, dr in directions]
+
 class Unit:
     def __init__(self, name, base_health, base_damage, base_morale, base_agility, base_soldiers, image_key, range_, is_enemy=False):
         self.name = name
@@ -16,9 +20,11 @@ class Unit:
         self.health = base_health
         self.base_damage = base_damage
         self.base_morale = base_morale
+        self.morale = base_morale
         self.base_agility = base_agility
         self.agility_points = base_agility
         self.base_soldiers = base_soldiers
+        self.soldiers = base_soldiers
         self.image_key = image_key
         self.range = range_  # Range is now only for shooting
         self.selected = False
@@ -30,11 +36,67 @@ class Unit:
         self.smoke_grenades = 1  # Number of smoke grenades available
         self.q = None  # Hex coordinates
         self.r = None
+        self.surrendered = False
+        self.tile_map = None  # Reference to the tile map
+
+    def set_tile_map(self, tile_map):
+        self.tile_map = tile_map
 
     def reset_turn(self):
         self.agility_points = self.base_agility
         self.accuracy = self.base_accuracy
         self.smoke_affected = False
+        self.update_morale()
+
+    def update_morale(self):
+        if not self.tile_map:
+            return False
+            
+        # Calculate morale based on health percentage and nearby friendly/enemy units
+        health_percentage = (self.health / self.base_health) * 100
+        
+        # Count nearby friendly and enemy units
+        nearby_friendly = 0
+        nearby_enemy = 0
+        for nq, nr in get_neighbors(self.q, self.r):
+            if (nq, nr) in self.tile_map:
+                unit = self.tile_map[(nq, nr)].unit
+                if unit:
+                    if unit.is_enemy == self.is_enemy:
+                        nearby_friendly += 1
+                    else:
+                        nearby_enemy += 1
+        
+        # Calculate morale modifiers
+        health_modifier = health_percentage / 100
+        outnumbered_modifier = 1.0
+        if nearby_enemy > nearby_friendly:
+            outnumbered_modifier = 0.8  # 20% morale penalty when outnumbered
+        
+        # Update morale
+        self.morale = int(self.base_morale * health_modifier * outnumbered_modifier)
+        
+        # Check for surrender
+        if self.morale < 20 and not isinstance(self, TankUnit):  # Tanks don't surrender
+            self.surrendered = True
+            return True
+        return False
+
+    def take_damage(self, damage):
+        if isinstance(self, TankUnit):
+            self.health -= damage
+        else:
+            # For infantry, damage reduces both health and soldier count
+            soldier_loss = max(1, int(damage / 10))  # At least 1 soldier lost per 10 damage
+            self.soldiers = max(0, self.soldiers - soldier_loss)
+            self.health = int((self.soldiers / self.base_soldiers) * self.base_health)
+            
+            # Update morale after taking damage
+            self.update_morale()
+            
+            if self.soldiers == 0 or self.health <= 0:
+                return True  # Unit is destroyed
+        return False
 
     def is_adjacent(self, other_tile):
         dq = abs(self.q - other_tile.q)
@@ -66,19 +128,23 @@ class Unit:
         return True
 
     def get_status_report(self):
-        morale_status = "High" if self.base_morale > 70 else "Medium" if self.base_morale > 40 else "Low"
+        morale_status = "High" if self.morale > 70 else "Medium" if self.morale > 40 else "Low"
         health_status = "Good" if self.health > 70 else "Fair" if self.health > 40 else "Critical"
         accuracy_status = "Excellent" if self.accuracy > 80 else "Good" if self.accuracy > 60 else "Poor"
         
         status_messages = [
             f"Unit Status: {self.name}",
             f"Health: {health_status} ({self.health}/{self.base_health})",
-            f"Morale: {morale_status}",
+            f"Morale: {morale_status} ({self.morale}%)",
             f"Accuracy: {accuracy_status}",
             f"Remaining Actions: {self.agility_points}/{self.base_agility}",
             f"Movement Range: 1 hex per AP",
             f"Combat Range: {self.range} hexes"
         ]
+        
+        # Add soldier count for infantry
+        if not isinstance(self, TankUnit):
+            status_messages.insert(2, f"Soldiers: {self.soldiers}/{self.base_soldiers}")
         
         # Only add grenade info for infantry
         if not isinstance(self, TankUnit):

@@ -622,6 +622,9 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
     if defender.smoke_affected:
         damage *= 0.5
     
+    # Initialize armor reduction
+    armor_reduction = 0
+    
     # Apply ammunition type effects
     if isinstance(attacker, TankUnit):
         if ammo_type == "HE":
@@ -630,6 +633,7 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
                 damage *= 1.5
             else:
                 damage *= 0.8
+            armor_reduction = max(0, defender.armor - attacker.armor_penetration)
         elif ammo_type == "APHE":
             # APHE rounds are better against tanks
             if isinstance(defender, TankUnit):
@@ -637,7 +641,7 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
                 armor_reduction = max(0, defender.armor - attacker.armor_penetration * 1.5)
             else:
                 damage *= 0.7
-                armor_reduction = 0
+                armor_reduction = max(0, defender.armor - attacker.armor_penetration)
         else:
             armor_reduction = max(0, defender.armor - attacker.armor_penetration)
     else:
@@ -654,6 +658,52 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
             damage *= 0.6  # 40% damage reduction at long range
     
     return int(damage)
+
+def get_combat_message(attacker, defender, damage, distance, ammo_type=None):
+    messages = []
+    
+    # Base attack message
+    if isinstance(attacker, TankUnit):
+        if ammo_type == "HE":
+            messages.append(f"{attacker.name} fires a High Explosive round at {defender.name}!")
+        elif ammo_type == "APHE":
+            messages.append(f"{attacker.name} fires an Armor Piercing round at {defender.name}!")
+        else:
+            messages.append(f"{attacker.name} engages {defender.name}!")
+    else:
+        range_text = "at point blank" if distance == 1 else f"at {distance} hexes range"
+        messages.append(f"{attacker.name} opens fire on {defender.name} {range_text}!")
+    
+    # Damage message
+    if damage > 0:
+        if isinstance(defender, TankUnit):
+            if damage > defender.health * 0.5:
+                messages.append(f"The round penetrates the armor, causing severe damage!")
+            elif damage > defender.health * 0.2:
+                messages.append(f"The round strikes the tank, causing moderate damage!")
+            else:
+                messages.append(f"The round glances off the armor, causing minor damage!")
+        else:
+            soldier_loss = max(1, int(damage / 10))
+            if soldier_loss > defender.soldiers * 0.5:
+                messages.append(f"Devastating fire! {soldier_loss} soldiers fall!")
+            elif soldier_loss > defender.soldiers * 0.2:
+                messages.append(f"Heavy casualties! {soldier_loss} soldiers are hit!")
+            else:
+                messages.append(f"{soldier_loss} soldiers are wounded!")
+            
+            # Morale message
+            if defender.morale < 30:
+                messages.append(f"The unit's morale is breaking!")
+            elif defender.morale < 50:
+                messages.append(f"The unit is showing signs of wavering!")
+    else:
+        if isinstance(attacker, TankUnit):
+            messages.append(f"The round misses its target!")
+        else:
+            messages.append(f"The shots go wide!")
+    
+    return messages
 
 def throw_grenade(unit, target_tile):
     if unit.grenades <= 0 or unit.agility_points < 2:
@@ -724,20 +774,25 @@ def handle_tile_click(pos, tile_rects):
                         ammo_type = "HE" if current_action == "he_round" else "APHE"
                         if (current_action == "he_round" and selected_unit.he_rounds > 0) or \
                            (current_action == "aphe_round" and selected_unit.aphe_rounds > 0):
+                            # Deduct AP and ammo before calculating damage
+                            selected_unit.agility_points -= 2
+                            if current_action == "he_round":
+                                selected_unit.he_rounds -= 1
+                            else:
+                                selected_unit.aphe_rounds -= 1
+                            
                             damage = calculate_damage(selected_unit, target_tile.unit, target_tile, ammo_type)
+                            combat_messages = get_combat_message(selected_unit, target_tile.unit, damage, 1, ammo_type)
+                            for msg in combat_messages:
+                                message_log.add_message(msg)
+                            
                             if damage > 0:
-                                target_tile.unit.health -= damage
-                                message_log.add_message(f"{selected_unit.name} fires {ammo_type} round at {target_tile.unit.name} for {damage} damage!")
-                                if target_tile.unit.health <= 0:
+                                if target_tile.unit.take_damage(damage):
                                     message_log.add_message(f"{target_tile.unit.name} has been destroyed!")
                                     target_tile.unit = None
-                                if current_action == "he_round":
-                                    selected_unit.he_rounds -= 1
-                                else:
-                                    selected_unit.aphe_rounds -= 1
-                                selected_unit.agility_points -= 2
-                            else:
-                                message_log.add_message(f"{selected_unit.name} missed!")
+                                elif target_tile.unit.surrendered:
+                                    message_log.add_message(f"{target_tile.unit.name} surrenders!")
+                                    target_tile.unit = None
                             waiting_for_target = False
                             current_action = None
                 return
@@ -764,17 +819,21 @@ def handle_tile_click(pos, tile_rects):
                 elif tile.unit and tile.unit != selected_unit and tile.unit.is_enemy != selected_unit.is_enemy:
                     # Attack (range is for shooting only)
                     if dist <= selected_unit.range and selected_unit.agility_points >= 2:
+                        # Deduct AP before calculating damage
+                        selected_unit.agility_points -= 2
+                        
                         damage = calculate_damage(selected_unit, tile.unit, tile, distance=dist)
+                        combat_messages = get_combat_message(selected_unit, tile.unit, damage, dist)
+                        for msg in combat_messages:
+                            message_log.add_message(msg)
+                        
                         if damage > 0:
-                            tile.unit.health -= damage
-                            range_text = "at point blank" if dist == 1 else f"at {dist} hexes range"
-                            message_log.add_message(f"{selected_unit.name} attacks {tile.unit.name} {range_text} for {damage} damage.")
-                            if tile.unit.health <= 0:
-                                message_log.add_message(f"{tile.unit.name} has been defeated!")
+                            if tile.unit.take_damage(damage):
+                                message_log.add_message(f"{tile.unit.name} has been destroyed!")
                                 tile.unit = None
-                            selected_unit.agility_points -= 2
-                        else:
-                            message_log.add_message(f"{selected_unit.name} missed!")
+                            elif tile.unit.surrendered:
+                                message_log.add_message(f"{tile.unit.name} surrenders!")
+                                tile.unit = None
                         return
             
             if tile.unit and not tile.unit.is_enemy:
@@ -783,7 +842,7 @@ def handle_tile_click(pos, tile_rects):
 
 def ai_turn():
     for enemy in enemy_units:
-        if enemy.health <= 0:
+        if enemy.health <= 0 or enemy.surrendered:
             continue
         enemy.agility_points = enemy.base_agility
         while enemy.agility_points >= 2:
@@ -794,18 +853,23 @@ def ai_turn():
                     dist = max(abs(q - enemy.q), abs(r - enemy.r), 
                              abs((-enemy.q - enemy.r) - (-q - r)))
                     if dist <= enemy.range:
+                        # Deduct AP before calculating damage
+                        enemy.agility_points -= 2
+                        
                         damage = calculate_damage(enemy, tile.unit, tile)
+                        combat_messages = get_combat_message(enemy, tile.unit, damage, dist)
+                        for msg in combat_messages:
+                            message_log.add_message(msg)
+                        
                         if damage > 0:
-                            tile.unit.health -= damage
-                            message_log.add_message(f"{enemy.name} attacks {tile.unit.name} for {damage} damage.")
-                            if tile.unit.health <= 0:
-                                message_log.add_message(f"{tile.unit.name} has been defeated!")
+                            if tile.unit.take_damage(damage):
+                                message_log.add_message(f"{tile.unit.name} has been destroyed!")
                                 tile.unit = None
-                            enemy.agility_points -= 2
-                            attacked = True
-                            break
-                        else:
-                            message_log.add_message(f"{enemy.name} missed!")
+                            elif tile.unit.surrendered:
+                                message_log.add_message(f"{tile.unit.name} surrenders!")
+                                tile.unit = None
+                        attacked = True
+                        break
             if attacked:
                 continue
 
@@ -991,11 +1055,13 @@ def setup_mission(mission_id):
     # Place player units
     player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
     player_unit.q, player_unit.r = mission["player_pos"]
+    player_unit.set_tile_map(tile_map)
     tile_map[mission["player_pos"]].unit = player_unit
     units.append(player_unit)
     
     tank_unit = TankUnit("German Tank", 200, 40, 80, 3, 5, "ger_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
     tank_unit.q, tank_unit.r = mission["tank_pos"]
+    tank_unit.set_tile_map(tile_map)
     tile_map[mission["tank_pos"]].unit = tank_unit
     units.append(tank_unit)
     
@@ -1005,6 +1071,7 @@ def setup_mission(mission_id):
         if tile.unit is None and abs(q) + abs(r) > 8:
             tile.unit = enemy_unit
             enemy_unit.q, enemy_unit.r = q, r
+            enemy_unit.set_tile_map(tile_map)
             enemy_units.append(enemy_unit)
             break
     
