@@ -21,9 +21,18 @@ MENU_BACKGROUND = (40, 40, 40)
 MENU_HOVER = (60, 60, 60)
 MENU_TEXT = (255, 255, 255)
 MENU_BORDER = (200, 200, 200)
+MESSAGE_LOG_HEIGHT = 200
+MESSAGE_LOG_WIDTH = 500
+MESSAGE_LOG_PADDING = 10
+MESSAGE_LOG_MAX_LINES = 15
+MESSAGE_LOG_LINE_HEIGHT = 25
+MESSAGE_LOG_BULLET = "- "
+BOTTOM_PANEL_HEIGHT = 200
+SCROLL_STEP = 30  # How many pixels to scroll per wheel step
 
 # === DISPLAY SETTINGS ===
 is_fullscreen = False
+screen_width, screen_height = 1600, 900
 
 # === HEX UTILS ===
 def hex_to_pixel(q, r, size):
@@ -58,7 +67,6 @@ def get_neighbors(q, r):
 # === INIT PYGAME ===
 pygame.init()
 mixer.init()
-screen_width, screen_height = 1280, 720
 screen = pygame.display.set_mode((screen_width, screen_height))
 pygame.display.set_caption("Hex Strategy Game")
 font = pygame.font.SysFont(None, 24)
@@ -288,6 +296,128 @@ MISSIONS = {
     }
 }
 
+# === MESSAGE LOG ===
+class MessageLog:
+    def __init__(self):
+        self.messages = []
+        self.max_lines = MESSAGE_LOG_MAX_LINES
+        self.scroll_offset = 0
+        self.max_scroll = 0
+        self.content_height = 0
+        self.was_at_bottom = True  # Track if we were at the bottom before adding a message
+    
+    def add_message(self, message):
+        # Check if we were at the bottom before adding the message
+        self.was_at_bottom = (self.scroll_offset >= self.max_scroll - 1)
+        
+        self.messages.append(message)
+        if len(self.messages) > self.max_lines:
+            self.messages.pop(0)
+        
+        # Only reset scroll if we were at the bottom
+        if self.was_at_bottom:
+            self.scroll_offset = self.max_scroll
+        # Otherwise, keep the current scroll position
+    
+    def wrap_text(self, text, max_width):
+        words = text.split()
+        lines = []
+        current_line = []
+        
+        for word in words:
+            # Test if adding the word would exceed the width
+            test_line = ' '.join(current_line + [word])
+            if font.size(test_line)[0] <= max_width:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        return lines
+    
+    def calculate_content_height(self, available_width):
+        total_height = 0
+        for message in self.messages:
+            wrapped_lines = self.wrap_text(message, available_width)
+            total_height += len(wrapped_lines) * MESSAGE_LOG_LINE_HEIGHT
+        return total_height
+    
+    def handle_scroll(self, amount):
+        # Calculate new scroll offset
+        new_offset = self.scroll_offset + amount
+        
+        # Ensure scroll offset stays within bounds
+        self.scroll_offset = max(0, min(self.max_scroll, new_offset))
+        
+        # Update was_at_bottom flag
+        self.was_at_bottom = (self.scroll_offset >= self.max_scroll - 1)
+    
+    def draw(self, surface, x, y, width, height):
+        # Draw background
+        pygame.draw.rect(surface, (30, 30, 30), (x, y, width, height))
+        pygame.draw.rect(surface, MENU_BORDER, (x, y, width, height), 2)
+        
+        # Calculate available width for content
+        content_width = width - (2 * MESSAGE_LOG_PADDING)
+        
+        # Calculate total content height
+        self.content_height = self.calculate_content_height(content_width)
+        
+        # Calculate visible height
+        visible_height = height - (2 * MESSAGE_LOG_PADDING)
+        
+        # Update max scroll
+        self.max_scroll = max(0, self.content_height - visible_height)
+        
+        # If we were at the bottom and new content was added, update scroll offset
+        if self.was_at_bottom:
+            self.scroll_offset = self.max_scroll
+        
+        # Create a clipping rectangle for the message area
+        clip_rect = pygame.Rect(x + MESSAGE_LOG_PADDING, y + MESSAGE_LOG_PADDING,
+                              content_width,
+                              visible_height)
+        old_clip = surface.get_clip()
+        surface.set_clip(clip_rect)
+        
+        # Draw messages
+        y_offset = y + MESSAGE_LOG_PADDING - self.scroll_offset
+        
+        for message in self.messages:
+            # Wrap the message text
+            wrapped_lines = self.wrap_text(message, content_width - font.size(MESSAGE_LOG_BULLET)[0])
+            
+            # Draw each line of the wrapped message
+            for i, line in enumerate(wrapped_lines):
+                # Add bullet point to first line of each message
+                if i == 0:
+                    line = MESSAGE_LOG_BULLET + line
+                
+                text = font.render(line, True, MENU_TEXT)
+                surface.blit(text, (x + MESSAGE_LOG_PADDING, y_offset))
+                y_offset += MESSAGE_LOG_LINE_HEIGHT
+        
+        # Restore original clipping rectangle
+        surface.set_clip(old_clip)
+        
+        # Draw scroll indicator if there's more content than can be displayed
+        if self.content_height > visible_height:
+            # Calculate scroll indicator position
+            indicator_height = visible_height * (visible_height / self.content_height)
+            indicator_pos = (self.scroll_offset / self.max_scroll) * (visible_height - indicator_height)
+            
+            # Draw scroll indicator
+            indicator_rect = pygame.Rect(x + width - 5, y + MESSAGE_LOG_PADDING + indicator_pos,
+                                       5, indicator_height)
+            pygame.draw.rect(surface, (100, 100, 100), indicator_rect)
+
+# Create message log instance
+message_log = MessageLog()
+
 # === DRAW FUNCTIONS ===
 def draw_hex(q, r, color, size, surface, border_color=(0, 0, 0)):
     # Pointy topped hex points
@@ -395,53 +525,61 @@ def handle_menu_click(pos):
     for button_rect, action in draw_action_menu.buttons:
         if button_rect.collidepoint(pos):
             if action == "Attack":
-                print(f"{selected_unit.name} is ready to attack!")
+                message_log.add_message(f"{selected_unit.name} is ready to attack!")
                 action_menu_active = False
             elif action == "Fire HE Round":
-                print(f"{selected_unit.name} is ready to fire HE round!")
+                message_log.add_message(f"{selected_unit.name} is ready to fire HE round!")
                 waiting_for_target = True
                 current_action = "he_round"
                 action_menu_active = False
             elif action == "Fire APHE Round":
-                print(f"{selected_unit.name} is ready to fire APHE round!")
+                message_log.add_message(f"{selected_unit.name} is ready to fire APHE round!")
                 waiting_for_target = True
                 current_action = "aphe_round"
                 action_menu_active = False
             elif action == "Throw Grenade":
-                print(f"{selected_unit.name} is ready to throw a grenade!")
+                message_log.add_message(f"{selected_unit.name} is ready to throw a grenade!")
                 waiting_for_target = True
                 current_action = "grenade"
                 action_menu_active = False
             elif action == "Throw Smoke":
-                print(f"{selected_unit.name} is ready to throw a smoke grenade!")
+                message_log.add_message(f"{selected_unit.name} is ready to throw a smoke grenade!")
                 waiting_for_target = True
                 current_action = "smoke"
                 action_menu_active = False
             elif action == "Status Report":
-                print(f"Status Report for {selected_unit.name}:")
+                message_log.add_message(f"Status Report for {selected_unit.name}:")
                 for line in selected_unit.get_status_report():
-                    print(line)
+                    message_log.add_message(line)
                 action_menu_active = False
             return True
     return False
 
-def draw_unit_info(unit):
-    panel_height = 150
-    pygame.draw.rect(screen, (30, 30, 30), (0, screen_height - panel_height, screen_width, panel_height))
+def draw_bottom_panel():
+    # Draw the permanent bottom panel
+    pygame.draw.rect(screen, (30, 30, 30), (0, screen_height - BOTTOM_PANEL_HEIGHT, screen_width, BOTTOM_PANEL_HEIGHT))
+    pygame.draw.rect(screen, MENU_BORDER, (0, screen_height - BOTTOM_PANEL_HEIGHT, screen_width, BOTTOM_PANEL_HEIGHT), 2)
     
+    # Draw message log on the right side
+    message_log.draw(screen, screen_width - MESSAGE_LOG_WIDTH - 20, 
+                    screen_height - BOTTOM_PANEL_HEIGHT + 10,
+                    MESSAGE_LOG_WIDTH, BOTTOM_PANEL_HEIGHT - 20)
+
+def draw_unit_info(unit):
     # Draw unit image
     image_key = "ger_infantry" if isinstance(unit, InfantryUnit) else "ger_tank"
     if image_key in images:
-        screen.blit(images[image_key], (20, screen_height - panel_height + 10))
+        screen.blit(images[image_key], (20, screen_height - BOTTOM_PANEL_HEIGHT + 10))
     
     # Draw unit status
     status_messages = unit.get_status_report()
     for i, line in enumerate(status_messages):
         text = font.render(line, True, (255, 255, 255))
-        screen.blit(text, (240, screen_height - panel_height + 10 + i * 25))
+        screen.blit(text, (240, screen_height - BOTTOM_PANEL_HEIGHT + 10 + i * 25))
 
 def draw_end_turn_button():
-    btn_rect = pygame.Rect(screen_width - 150, screen_height - 50, 130, 40)
+    # Move button to top-right corner
+    btn_rect = pygame.Rect(screen_width - 150, 20, 130, 40)
     pygame.draw.rect(screen, (100, 100, 255), btn_rect)
     pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2)
     text = font.render("End Turn", True, (255, 255, 255))
@@ -456,6 +594,10 @@ def draw_back_to_menu_button():
     screen.blit(text, (btn_rect.x + 10, btn_rect.y + 10))
     return btn_rect
 
+def draw_message_log():
+    # Draw message log at the bottom of the screen
+    message_log.draw(screen, screen_width - MESSAGE_LOG_WIDTH - 20, screen_height - MESSAGE_LOG_HEIGHT - 20, MESSAGE_LOG_WIDTH, MESSAGE_LOG_HEIGHT)
+
 # === COMBAT FUNCTIONS ===
 def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
     # Base damage calculation
@@ -466,7 +608,6 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
         accuracy = attacker.get_accuracy_at_range(distance)
     else:
         accuracy = attacker.accuracy
-    
     accuracy_roll = random.randint(1, 100)
     if accuracy_roll > accuracy:
         return 0  # Miss
@@ -568,14 +709,14 @@ def handle_tile_click(pos, tile_rects):
                 target_tile = tile_map[(q, r)]
                 if current_action == "grenade":
                     if selected_unit.throw_grenade(target_tile):
-                        print(f"{selected_unit.name} throws a grenade at {target_tile.unit.name if target_tile.unit else 'empty space'}!")
+                        message_log.add_message(f"{selected_unit.name} throws a grenade at {target_tile.unit.name if target_tile.unit else 'empty space'}!")
                         waiting_for_target = False
                         current_action = None
                     else:
-                        print(f"{selected_unit.name} cannot throw a grenade there!")
+                        message_log.add_message(f"{selected_unit.name} cannot throw a grenade there!")
                 elif current_action == "smoke":
                     if throw_smoke(selected_unit, target_tile):
-                        print(f"{selected_unit.name} throws a smoke grenade!")
+                        message_log.add_message(f"{selected_unit.name} throws a smoke grenade!")
                         waiting_for_target = False
                         current_action = None
                 elif current_action in ["he_round", "aphe_round"] and target_tile.unit:
@@ -586,9 +727,9 @@ def handle_tile_click(pos, tile_rects):
                             damage = calculate_damage(selected_unit, target_tile.unit, target_tile, ammo_type)
                             if damage > 0:
                                 target_tile.unit.health -= damage
-                                print(f"{selected_unit.name} fires {ammo_type} round at {target_tile.unit.name} for {damage} damage!")
+                                message_log.add_message(f"{selected_unit.name} fires {ammo_type} round at {target_tile.unit.name} for {damage} damage!")
                                 if target_tile.unit.health <= 0:
-                                    print(f"{target_tile.unit.name} has been destroyed!")
+                                    message_log.add_message(f"{target_tile.unit.name} has been destroyed!")
                                     target_tile.unit = None
                                 if current_action == "he_round":
                                     selected_unit.he_rounds -= 1
@@ -596,7 +737,7 @@ def handle_tile_click(pos, tile_rects):
                                     selected_unit.aphe_rounds -= 1
                                 selected_unit.agility_points -= 2
                             else:
-                                print(f"{selected_unit.name} missed!")
+                                message_log.add_message(f"{selected_unit.name} missed!")
                             waiting_for_target = False
                             current_action = None
                 return
@@ -627,13 +768,13 @@ def handle_tile_click(pos, tile_rects):
                         if damage > 0:
                             tile.unit.health -= damage
                             range_text = "at point blank" if dist == 1 else f"at {dist} hexes range"
-                            print(f"{selected_unit.name} attacks {tile.unit.name} {range_text} for {damage} damage.")
+                            message_log.add_message(f"{selected_unit.name} attacks {tile.unit.name} {range_text} for {damage} damage.")
                             if tile.unit.health <= 0:
-                                print(f"{tile.unit.name} has been defeated!")
+                                message_log.add_message(f"{tile.unit.name} has been defeated!")
                                 tile.unit = None
                             selected_unit.agility_points -= 2
                         else:
-                            print(f"{selected_unit.name} missed!")
+                            message_log.add_message(f"{selected_unit.name} missed!")
                         return
             
             if tile.unit and not tile.unit.is_enemy:
@@ -656,15 +797,15 @@ def ai_turn():
                         damage = calculate_damage(enemy, tile.unit, tile)
                         if damage > 0:
                             tile.unit.health -= damage
-                            print(f"{enemy.name} attacks {tile.unit.name} for {damage} damage.")
+                            message_log.add_message(f"{enemy.name} attacks {tile.unit.name} for {damage} damage.")
                             if tile.unit.health <= 0:
-                                print(f"{tile.unit.name} has been defeated!")
+                                message_log.add_message(f"{tile.unit.name} has been defeated!")
                                 tile.unit = None
                             enemy.agility_points -= 2
                             attacked = True
                             break
                         else:
-                            print(f"{enemy.name} missed!")
+                            message_log.add_message(f"{enemy.name} missed!")
             if attacked:
                 continue
 
@@ -949,6 +1090,7 @@ while running:
     elif menu_state == MENU_STATE_GAME:
         screen.fill((10, 10, 20))
         tile_rects = draw_map()
+        draw_bottom_panel()  # Always draw the bottom panel
         if selected_unit:
             draw_unit_info(selected_unit)
         draw_action_menu()
@@ -1008,19 +1150,34 @@ while running:
                             # If clicked outside a unit, close the menu
                             action_menu_active = False
                             action_menu_pos = None
-                elif event.button == 4:  # Mouse wheel up - zoom in
-                    hex_size = min(max_hex_size, hex_size + 2)
-                elif event.button == 5:  # Mouse wheel down - zoom out
-                    hex_size = max(min_hex_size, hex_size - 2)
+                elif event.button == 4:  # Mouse wheel up
+                    # Check if mouse is over the message log
+                    log_rect = pygame.Rect(screen_width - MESSAGE_LOG_WIDTH - 20, 
+                                         screen_height - BOTTOM_PANEL_HEIGHT + 10,
+                                         MESSAGE_LOG_WIDTH, BOTTOM_PANEL_HEIGHT - 20)
+                    if log_rect.collidepoint(event.pos):
+                        message_log.handle_scroll(-SCROLL_STEP)  # Scroll up (show newer messages)
+                    else:
+                        hex_size = min(max_hex_size, hex_size + 2)  # Zoom in
+                elif event.button == 5:  # Mouse wheel down
+                    # Check if mouse is over the message log
+                    log_rect = pygame.Rect(screen_width - MESSAGE_LOG_WIDTH - 20, 
+                                         screen_height - BOTTOM_PANEL_HEIGHT + 10,
+                                         MESSAGE_LOG_WIDTH, BOTTOM_PANEL_HEIGHT - 20)
+                    if log_rect.collidepoint(event.pos):
+                        message_log.handle_scroll(SCROLL_STEP)  # Scroll down (show older messages)
+                    else:
+                        hex_size = max(min_hex_size, hex_size - 2)  # Zoom out
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
                     dragging = False
-            elif event.type == pygame.MOUSEMOTION and dragging:
-                mx, my = event.pos
-                dx = mx - drag_start_pos[0]
-                dy = my - drag_start_pos[1]
-                camera_offset_x = camera_start_offset[0] + dx
-                camera_offset_y = camera_start_offset[1] + dy
+            elif event.type == pygame.MOUSEMOTION:
+                if dragging:
+                    mx, my = event.pos
+                    dx = mx - drag_start_pos[0]
+                    dy = my - drag_start_pos[1]
+                    camera_offset_x = camera_start_offset[0] + dx
+                    camera_offset_y = camera_start_offset[1] + dy
         clock.tick(60)
 
 pygame.quit()
