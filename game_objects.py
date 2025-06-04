@@ -2,11 +2,13 @@ import pygame
 import math
 import random
 
-TERRAIN_TYPES = ["Plain", "House", "Hill"]
+TERRAIN_TYPES = ["Plains", "Hill", "Forest", "House", "Road"]
 TERRAIN_COLORS = {
-    "Plain": (180, 220, 180),
-    "House": (100, 100, 100),
-    "Hill": (160, 130, 100)
+    "Plains": (100, 200, 100),  # Light green
+    "Hill": (150, 150, 100),    # Brownish
+    "Forest": (0, 100, 0),      # Dark green
+    "House": (150, 150, 150),   # Gray
+    "Road": (200, 200, 150)     # Light brown/beige
 }
 
 def get_neighbors(q, r):
@@ -83,19 +85,20 @@ class Unit:
         return False
 
     def take_damage(self, damage):
-        if isinstance(self, TankUnit):
-            self.health -= damage
+        if isinstance(self, InfantryUnit):
+            self.soldiers = max(0, self.soldiers - int(damage / 10))
+            self.health = self.soldiers * 10
+            if self.health <= 0:
+                # 50-50 chance of death or surrender
+                if random.random() < 0.5:
+                    self.surrendered = True
+                    return True
+                else:
+                    return True  # Unit is destroyed
         else:
-            # For infantry, damage reduces both health and soldier count
-            soldier_loss = max(1, int(damage / 10))  # At least 1 soldier lost per 10 damage
-            self.soldiers = max(0, self.soldiers - soldier_loss)
-            self.health = int((self.soldiers / self.base_soldiers) * self.base_health)
-            
-            # Update morale after taking damage
-            self.update_morale()
-            
-            if self.soldiers == 0 or self.health <= 0:
-                return True  # Unit is destroyed
+            self.health = max(0, self.health - damage)
+            if self.health <= 0:
+                return True
         return False
 
     def is_adjacent(self, other_tile):
@@ -211,7 +214,7 @@ class Tile:
             self.accuracy_penalty = 0
         elif terrain_type == "House":
             self.defense_bonus = 0.3
-            self.accuracy_penalty = 0.1
+            self.accuracy_penalty = 0
         elif terrain_type == "Hill":
             self.defense_bonus = 0.1
             self.accuracy_penalty = -0.1

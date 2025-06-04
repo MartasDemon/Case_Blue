@@ -8,6 +8,13 @@ from game_objects import InfantryUnit, TankUnit, Tile, TERRAIN_TYPES, TERRAIN_CO
 from pygame import mixer
 
 # === CONFIGURATION ===
+# Add River and Bridge to terrain types
+TERRAIN_TYPES.extend(["River", "Bridge"])
+TERRAIN_COLORS.update({
+    "River": (0, 0, 255),  # Blue for river
+    "Bridge": (139, 69, 19)  # Brown for bridge
+})
+
 IMAGE_PATHS = {
     "ger_infantry": ["images/ger_infantry1.jpg", "images/ger_infantry2.jpg"],
     "ger_tank": "images/ger_stug1.jpg"
@@ -205,7 +212,7 @@ else:
     video_bg = None
 
 # === MAP GENERATION ===
-MAP_RADIUS = 6
+MAP_RADIUS = 8
 base_hex_size = 40
 hex_size = base_hex_size
 tile_map = {}
@@ -603,24 +610,48 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
     # Base damage calculation
     damage = attacker.base_damage
     
-    # Apply accuracy check with range penalties
-    if isinstance(attacker, InfantryUnit):
-        accuracy = attacker.get_accuracy_at_range(distance)
-    else:
-        accuracy = attacker.accuracy
-    accuracy_roll = random.randint(1, 100)
-    if accuracy_roll > accuracy:
+    # Calculate base hit chance based on unit stats
+    base_hit_chance = attacker.accuracy
+    
+    # Apply terrain modifiers to hit chance
+    terrain_modifiers = {
+        "House": 0.7,  # Units in houses are harder to hit
+        "Hill": 0.8,   # Units on hills are harder to hit
+        "Forest": 0.75, # Units in forests are harder to hit
+        "Bridge": 1.3,  # Units on bridges are easier to hit
+        "Plains": 1.0,  # Normal hit chance on plains
+        "Road": 1.0,    # Normal hit chance on roads
+        "River": 0.0,   # Can't hit units in river (they can't be there anyway)
+    }
+    
+    # Apply terrain modifier to hit chance
+    hit_chance = base_hit_chance * terrain_modifiers.get(tile.terrain_type, 1.0)
+    
+    # Apply morale modifier to hit chance (higher morale = better accuracy)
+    morale_modifier = 0.5 + (attacker.morale / 200)  # 0.5 to 1.5 range
+    hit_chance *= morale_modifier
+    
+    # Apply range penalty
+    if distance > 1:
+        hit_chance *= (1 - (distance - 1) * 0.2)  # 20% penalty per hex of distance
+    
+    # Apply smoke effects
+    if defender.smoke_affected:
+        hit_chance *= 0.5
+    
+    # Roll for hit
+    hit_roll = random.randint(1, 100)
+    if hit_roll > hit_chance:
         return 0  # Miss
     
-    # Apply terrain effects
+    # If hit, calculate damage
+    damage = attacker.base_damage
+    
+    # Apply terrain effects to damage
     if tile.terrain_type == "House":
         damage *= 0.7
     elif tile.terrain_type == "Hill":
         damage *= 0.9
-    
-    # Apply smoke effects
-    if defender.smoke_affected:
-        damage *= 0.5
     
     # Initialize armor reduction
     armor_reduction = 0
@@ -628,14 +659,12 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
     # Apply ammunition type effects
     if isinstance(attacker, TankUnit):
         if ammo_type == "HE":
-            # HE rounds are better against infantry
             if isinstance(defender, InfantryUnit):
                 damage *= 1.5
             else:
                 damage *= 0.8
             armor_reduction = max(0, defender.armor - attacker.armor_penetration)
         elif ammo_type == "APHE":
-            # APHE rounds are better against tanks
             if isinstance(defender, TankUnit):
                 damage *= 1.3
                 armor_reduction = max(0, defender.armor - attacker.armor_penetration * 1.5)
@@ -653,55 +682,80 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
     # Apply range damage reduction for infantry
     if isinstance(attacker, InfantryUnit):
         if distance == 2:
-            damage *= 0.8  # 20% damage reduction at medium range
+            damage *= 0.8
         elif distance == 3:
-            damage *= 0.6  # 40% damage reduction at long range
+            damage *= 0.6
+    
+    # Reduce defender's morale based on damage taken
+    morale_loss = int(damage / 5)  # 1 morale loss per 5 damage
+    defender.morale = max(0, defender.morale - morale_loss)
     
     return int(damage)
 
 def get_combat_message(attacker, defender, damage, distance, ammo_type=None):
     messages = []
     
-    # Base attack message
+    # Get terrain type for the defender
+    defender_terrain = defender.tile_map[(defender.q, defender.r)].terrain_type
+    
+    # Create initial attack message with distance and terrain
+    distance_text = "point blank" if distance == 1 else f"{distance} hexes away"
+    terrain_text = f"on {defender_terrain.lower()}" if defender_terrain != "Plains" else "in the open"
+    
     if isinstance(attacker, TankUnit):
         if ammo_type == "HE":
-            messages.append(f"{attacker.name} fires a High Explosive round at {defender.name}!")
+            messages.append(f"{attacker.name} fires a High Explosive round at {defender.name} {distance_text} {terrain_text}!")
         elif ammo_type == "APHE":
-            messages.append(f"{attacker.name} fires an Armor Piercing round at {defender.name}!")
+            messages.append(f"{attacker.name} fires an Armor Piercing round at {defender.name} {distance_text} {terrain_text}!")
         else:
-            messages.append(f"{attacker.name} engages {defender.name}!")
+            messages.append(f"{attacker.name} engages {defender.name} {distance_text} {terrain_text}!")
     else:
-        range_text = "at point blank" if distance == 1 else f"at {distance} hexes range"
-        messages.append(f"{attacker.name} opens fire on {defender.name} {range_text}!")
+        messages.append(f"{attacker.name} opens fire on {defender.name} {distance_text} {terrain_text}!")
     
-    # Damage message
+    # Damage and result messages
     if damage > 0:
         if isinstance(defender, TankUnit):
+            soldier_loss = max(1, int(damage / 10))
             if damage > defender.health * 0.5:
-                messages.append(f"The round penetrates the armor, causing severe damage!")
+                messages.append(f"Critical hit! The round penetrates the armor, causing severe damage! The tank takes {damage} damage!")
             elif damage > defender.health * 0.2:
-                messages.append(f"The round strikes the tank, causing moderate damage!")
+                messages.append(f"The round strikes the tank, causing moderate damage! The tank takes {damage} damage!")
             else:
-                messages.append(f"The round glances off the armor, causing minor damage!")
+                messages.append(f"The round glances off the armor, causing minor damage! The tank takes {damage} damage!")
         else:
             soldier_loss = max(1, int(damage / 10))
             if soldier_loss > defender.soldiers * 0.5:
-                messages.append(f"Devastating fire! {soldier_loss} soldiers fall!")
+                messages.append(f"Devastating fire! {soldier_loss} soldiers fall! The unit takes {damage} damage!")
             elif soldier_loss > defender.soldiers * 0.2:
-                messages.append(f"Heavy casualties! {soldier_loss} soldiers are hit!")
+                messages.append(f"Heavy casualties! {soldier_loss} soldiers are hit! The unit takes {damage} damage!")
             else:
-                messages.append(f"{soldier_loss} soldiers are wounded!")
-            
-            # Morale message
-            if defender.morale < 30:
-                messages.append(f"The unit's morale is breaking!")
-            elif defender.morale < 50:
-                messages.append(f"The unit is showing signs of wavering!")
+                messages.append(f"{soldier_loss} soldiers are wounded! The unit takes {damage} damage!")
+        
+        # Add morale effect message
+        if defender.morale < 30:
+            messages.append(f"The unit's morale is critically low at {defender.morale}%!")
+        elif defender.morale < 50:
+            messages.append(f"The unit's morale is wavering at {defender.morale}%!")
     else:
         if isinstance(attacker, TankUnit):
-            messages.append(f"The round misses its target!")
+            messages.append(f"The round misses its target, exploding harmlessly in the distance!")
         else:
-            messages.append(f"The shots go wide!")
+            messages.append(f"The shots go wide, failing to find their mark!")
+    
+    # Add terrain effect message if relevant
+    if damage > 0:
+        if defender_terrain == "House":
+            messages.append("The building provides some cover from the attack!")
+        elif defender_terrain == "Hill":
+            messages.append("The elevated position helps mitigate the damage!")
+        elif defender_terrain == "Bridge":
+            messages.append("The exposed position on the bridge makes the unit more vulnerable!")
+        elif defender_terrain == "Forest":
+            messages.append("The dense forest provides some protection from the attack!")
+    
+    # Add smoke effect message if applicable
+    if defender.smoke_affected:
+        messages.append("The smoke screen helps protect the unit from the attack!")
     
     return messages
 
@@ -716,14 +770,22 @@ def throw_grenade(unit, target_tile):
         return False
     
     # Deal damage to all units in adjacent tiles
+    units_hit = []
     for nq, nr in get_neighbors(target_tile.q, target_tile.r):
         if (nq, nr) in tile_map:
             adjacent_tile = tile_map[(nq, nr)]
             if adjacent_tile.unit:
                 damage = unit.base_damage * 1.5  # Grenades deal 50% more damage
                 adjacent_tile.unit.health -= int(damage)
+                units_hit.append(adjacent_tile.unit)
                 if adjacent_tile.unit.health <= 0:
+                    message_log.add_message(f"{unit.name} throws a grenade! The blast eliminates {adjacent_tile.unit.name}!")
                     adjacent_tile.unit = None
+                else:
+                    # Reduce morale of surviving units
+                    morale_loss = random.randint(5, 15)
+                    adjacent_tile.unit.morale = max(0, adjacent_tile.unit.morale - morale_loss)
+                    message_log.add_message(f"{unit.name} throws a grenade! {adjacent_tile.unit.name} takes {int(damage)} damage and loses {morale_loss} morale!")
     
     unit.grenades -= 1
     unit.agility_points -= 2
@@ -739,11 +801,30 @@ def throw_smoke(unit, target_tile):
     if dist > 1:
         return False
     
-    # Apply smoke effect to target tile only
+    # Apply smoke effect to target tile and adjacent tiles
+    affected_tiles = []
+    for nq, nr in get_neighbors(target_tile.q, target_tile.r):
+        if (nq, nr) in tile_map:
+            adjacent_tile = tile_map[(nq, nr)]
+            adjacent_tile.smoke = True
+            adjacent_tile.smoke_turns = 2  # Smoke lasts for 2 turns
+            affected_tiles.append(adjacent_tile)
+            if adjacent_tile.unit:
+                adjacent_tile.unit.smoke_affected = True
+    
+    # Also apply to target tile
     target_tile.smoke = True
-    target_tile.smoke_turns = 2  # Smoke lasts for 2 turns
+    target_tile.smoke_turns = 2
+    affected_tiles.append(target_tile)
     if target_tile.unit:
         target_tile.unit.smoke_affected = True
+    
+    # Create message about affected units
+    affected_units = [tile.unit.name for tile in affected_tiles if tile.unit]
+    if affected_units:
+        message_log.add_message(f"{unit.name} throws a smoke grenade! The smoke screen conceals {', '.join(affected_units)}!")
+    else:
+        message_log.add_message(f"{unit.name} throws a smoke grenade, creating a smoke screen!")
     
     unit.smoke_grenades -= 1
     unit.agility_points -= 2
@@ -774,7 +855,6 @@ def handle_tile_click(pos, tile_rects):
                         ammo_type = "HE" if current_action == "he_round" else "APHE"
                         if (current_action == "he_round" and selected_unit.he_rounds > 0) or \
                            (current_action == "aphe_round" and selected_unit.aphe_rounds > 0):
-                            # Deduct AP and ammo before calculating damage
                             selected_unit.agility_points -= 2
                             if current_action == "he_round":
                                 selected_unit.he_rounds -= 1
@@ -809,7 +889,19 @@ def handle_tile_click(pos, tile_rects):
                 dist = max(abs(q - selected_unit.q), abs(r - selected_unit.r), 
                           abs((-selected_unit.q - selected_unit.r) - (-q - r)))
                 
-                if tile.unit is None and dist <= 1 and selected_unit.agility_points >= 1:
+                # Check if movement is valid
+                can_move = True
+                if tile.terrain_type == "River":
+                    can_move = False
+                    message_log.add_message("Cannot move into river!")
+                elif dist > 1:
+                    can_move = False
+                    message_log.add_message("Cannot move that far!")
+                elif selected_unit.agility_points < 1:
+                    can_move = False
+                    message_log.add_message("Not enough action points!")
+                
+                if can_move and tile.unit is None and dist <= 1 and selected_unit.agility_points >= 1:
                     # Move unit (1 AP = 1 hex movement)
                     tile_map[(selected_unit.q, selected_unit.r)].unit = None
                     selected_unit.q, selected_unit.r = q, r
@@ -819,7 +911,6 @@ def handle_tile_click(pos, tile_rects):
                 elif tile.unit and tile.unit != selected_unit and tile.unit.is_enemy != selected_unit.is_enemy:
                     # Attack (range is for shooting only)
                     if dist <= selected_unit.range and selected_unit.agility_points >= 2:
-                        # Deduct AP before calculating damage
                         selected_unit.agility_points -= 2
                         
                         damage = calculate_damage(selected_unit, tile.unit, tile, distance=dist)
@@ -840,11 +931,32 @@ def handle_tile_click(pos, tile_rects):
                 selected_unit = tile.unit
                 return
 
+# === MORALE SYSTEM ===
+def update_morale(unit, tile_map):
+    if unit.health <= 0 or unit.surrendered:
+        return
+        
+    # Check for nearby friendly units
+    nearby_friends = 0
+    for nq, nr in get_neighbors(unit.q, unit.r):
+        if (nq, nr) in tile_map:
+            neighbor_unit = tile_map[(nq, nr)].unit
+            if neighbor_unit and not neighbor_unit.is_enemy and neighbor_unit != unit:
+                nearby_friends += 1
+    
+    # Morale boost from nearby friends (up to +5 per turn)
+    if nearby_friends > 0:
+        morale_boost = min(5, nearby_friends)
+        unit.morale = min(100, unit.morale + morale_boost)
+        if morale_boost > 0:
+            message_log.add_message(f"{unit.name} gains {morale_boost} morale from nearby friendly units!")
+
 def ai_turn():
     for enemy in enemy_units:
         if enemy.health <= 0 or enemy.surrendered:
             continue
         enemy.agility_points = enemy.base_agility
+        update_morale(enemy, tile_map)  # Update enemy morale
         while enemy.agility_points >= 2:
             # Attack player units in range
             attacked = False
@@ -1045,12 +1157,44 @@ def setup_mission(mission_id):
     # Get mission data
     mission = MISSIONS[mission_id]
     
-    # Create map
-    for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
-        for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
-            if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
-                terrain = random.choice(TERRAIN_TYPES)
-                tile_map[(q, r)] = Tile(q, r, terrain)
+    # Create map with fixed layouts based on mission
+    if mission_id == 0:  # City-based mission with river
+        # Create a city layout with a river and bridges
+        for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
+            for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
+                if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
+                    # Create a river (horizontal line)
+                    if r == 0:
+                        terrain = "River"
+                    # Create bridges across the river
+                    elif r == 0 and (q == -2 or q == 2):
+                        terrain = "Bridge"
+                    # Create a city center
+                    elif abs(q) <= 2 and abs(r) <= 2 and r != 0:
+                        terrain = "House"
+                    # Create some roads
+                    elif q == 0 or r == 0 or q == r or q == -r:
+                        terrain = "Road"
+                    # Rest is plains
+                    else:
+                        terrain = "Plains"
+                    tile_map[(q, r)] = Tile(q, r, terrain)
+    
+    else:  # Hill-based mission
+        # Create a hill-based layout with some plains
+        for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
+            for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
+                if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
+                    # Create a central hill formation
+                    if abs(q) <= 3 and abs(r) <= 3:
+                        terrain = "Hill"
+                    # Create some forest patches
+                    elif (abs(q) == 4 and abs(r) <= 2) or (abs(r) == 4 and abs(q) <= 2):
+                        terrain = "Forest"
+                    # Rest is plains
+                    else:
+                        terrain = "Plains"
+                    tile_map[(q, r)] = Tile(q, r, terrain)
     
     # Place player units
     player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
