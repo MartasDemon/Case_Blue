@@ -218,6 +218,23 @@ class VideoBackground:
             print(f"Error initializing video background: {e}")
             self.cap = None
     
+    def stop(self):
+        """Stop both video and music"""
+        if self.cap is not None:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset video to start
+            pygame.mixer.music.stop()
+    
+    def restart(self):
+        """Restart both video and music"""
+        if self.cap is not None:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset video to start
+            try:
+                pygame.mixer.music.load(os.path.join('video', 'intro.mp3'))
+                pygame.mixer.music.set_volume(0.7)
+                pygame.mixer.music.play(-1)
+            except Exception as e:
+                print(f"Warning: Could not restart music: {e}")
+    
     def get_frame(self):
         if self.cap is None:
             return background
@@ -317,24 +334,46 @@ min_hex_size, max_hex_size = 20, 80
 
 # === MENU & MISSION SYSTEM ===
 MENU_STATE_MAIN = 0
-MENU_STATE_MISSION_SELECT = 1
-MENU_STATE_SETTINGS = 2
-MENU_STATE_GAME = 3
+MENU_STATE_CAMPAIGN_SELECT = 1
+MENU_STATE_MISSION_SELECT = 2
+MENU_STATE_SETTINGS = 3
+MENU_STATE_GAME = 4
 menu_state = MENU_STATE_MAIN
 selected_mission = 0
+selected_campaign = None
 
 # Menu button positions
 menu_buttons = [
-    ("Select Mission", (screen_width//2-100, screen_height//2-60, 200, 50)),
+    ("Select Campaign", (screen_width//2-100, screen_height//2-60, 200, 50)),
     ("Settings", (screen_width//2-100, screen_height//2, 200, 50)),
     ("Quit", (screen_width//2-100, screen_height//2+60, 200, 50)),
 ]
+
+# Campaign buttons
+campaign_buttons = [
+    {
+        "name": "German Campaign",
+        "subtitle": "Army Group South",
+        "image": "images/german_campaign.jpg",
+        "missions": [0, 1],  # Mission IDs for German campaign
+        "rect": (screen_width//4-150, screen_height//2-200, 300, 400)
+    },
+    {
+        "name": "Soviet Campaign",
+        "subtitle": "Stalingrad Front",
+        "image": "images/russian_campaign.jpg",
+        "missions": [2],  # Mission IDs for Soviet campaign
+        "rect": (3*screen_width//4-150, screen_height//2-200, 300, 400)
+    }
+]
+
 mission_buttons = [
     ("Mission 1", (screen_width//2-100, screen_height//2-40, 200, 50)),
     ("Mission 2", (screen_width//2-100, screen_height//2+20, 200, 50)),
     ("Mission 3", (screen_width//2-100, screen_height//2+80, 200, 50)),
     ("Back", (screen_width//2-100, screen_height//2+140, 200, 40)),
 ]
+
 settings_buttons = [
     ("Toggle Fullscreen", (screen_width//2-100, screen_height//2-40, 200, 50)),
     ("Back", (screen_width//2-100, screen_height//2+80, 200, 40)),
@@ -686,12 +725,13 @@ def draw_end_turn_button():
     screen.blit(text, (btn_rect.x + 20, btn_rect.y + 10))
     return btn_rect
 
-def draw_back_to_menu_button():
-    btn_rect = pygame.Rect(20, 20, 130, 40)
-    pygame.draw.rect(screen, (100, 100, 255), btn_rect)
+def draw_back_to_main_button():
+    btn_rect = pygame.Rect(20, 20, 150, 40)
+    pygame.draw.rect(screen, (60, 60, 80), btn_rect)
     pygame.draw.rect(screen, (255, 255, 255), btn_rect, 2)
     text = font.render("Back to Menu", True, (255, 255, 255))
-    screen.blit(text, (btn_rect.x + 10, btn_rect.y + 10))
+    screen.blit(text, (btn_rect.centerx - text.get_width()//2, 
+                      btn_rect.centery - text.get_height()//2))
     return btn_rect
 
 def draw_message_log():
@@ -1105,6 +1145,23 @@ def ai_turn():
                 break
 
 # === MENU FUNCTIONS ===
+def draw_button(rect, text, is_hovered=False, font_size=None):
+    """Draw a button with hover effect and centered text"""
+    # Use default font if no specific size provided
+    button_font = pygame.font.SysFont(None, font_size) if font_size else font
+    
+    # Draw button with hover effect
+    box_color = (80, 80, 100) if is_hovered else (60, 60, 80)
+    pygame.draw.rect(screen, box_color, rect)
+    pygame.draw.rect(screen, (255, 255, 255), rect, 2)
+    
+    # Draw text centered
+    text_surface = button_font.render(text, True, (255, 255, 255))
+    text_rect = text_surface.get_rect(center=rect.center)
+    screen.blit(text_surface, text_rect)
+    
+    return rect
+
 def draw_menu():
     # Draw background
     if video_bg and video_bg.cap is not None:
@@ -1121,12 +1178,68 @@ def draw_menu():
     title = font.render("Operation Case Blue", True, (255,255,255))
     screen.blit(title, (screen_width//2-title.get_width()//2, 100))
     
-    # Draw buttons
+    # Get mouse position for hover detection
+    mouse_pos = pygame.mouse.get_pos()
+    
+    # Draw buttons with hover effect
     for text, rect in menu_buttons:
-        pygame.draw.rect(screen, (60,60,80), rect)
-        pygame.draw.rect(screen, (255,255,255), rect, 2)
-        btn_text = font.render(text, True, (255,255,255))
-        screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+        is_hovered = pygame.Rect(rect).collidepoint(mouse_pos)
+        draw_button(pygame.Rect(rect), text, is_hovered)
+
+def draw_campaign_select():
+    # Draw background
+    if video_bg and video_bg.cap is not None:
+        screen.blit(video_bg.get_frame(), (0, 0))
+    else:
+        screen.blit(background, (0, 0))
+    
+    # Draw menu overlay
+    overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
+    overlay.fill((0,0,0,120))
+    screen.blit(overlay, (0,0))
+    
+    # Draw back to main menu button
+    mouse_pos = pygame.mouse.get_pos()
+    back_btn = draw_button(pygame.Rect(20, 20, 150, 40), "Back to Menu", 
+                          pygame.Rect(20, 20, 150, 40).collidepoint(mouse_pos))
+    
+    title = font.render("Select Campaign", True, (255,255,255))
+    screen.blit(title, (screen_width//2-title.get_width()//2, 100))
+    
+    # Draw campaign buttons
+    for campaign in campaign_buttons:
+        rect = pygame.Rect(campaign["rect"])
+        is_hovered = rect.collidepoint(mouse_pos)
+        
+        # Draw campaign box with hover effect
+        box_color = (80, 80, 100) if is_hovered else (60, 60, 80)
+        pygame.draw.rect(screen, box_color, rect)
+        pygame.draw.rect(screen, (255, 255, 255), rect, 2)
+        
+        # Load and draw campaign image
+        try:
+            img = pygame.image.load(campaign["image"])
+            img = pygame.transform.scale(img, (280, 200))  # Slightly smaller than box
+            img_rect = img.get_rect(center=(rect.centerx, rect.centery - 50))
+            screen.blit(img, img_rect)
+        except Exception as e:
+            print(f"Warning: Could not load campaign image {campaign['image']}: {e}")
+        
+        # Draw campaign name
+        name_font = pygame.font.SysFont(None, 36)
+        name_text = name_font.render(campaign["name"], True, (255, 255, 255))
+        name_rect = name_text.get_rect(center=(rect.centerx, rect.bottom - 80))
+        screen.blit(name_text, name_rect)
+        
+        # Draw campaign subtitle
+        subtitle_font = pygame.font.SysFont(None, 24)
+        subtitle_text = subtitle_font.render(campaign["subtitle"], True, (200, 200, 200))
+        subtitle_rect = subtitle_text.get_rect(center=(rect.centerx, rect.bottom - 50))
+        screen.blit(subtitle_text, subtitle_rect)
+    
+    # Draw back button with hover effect
+    back_rect = pygame.Rect(screen_width//2-100, screen_height-100, 200, 40)
+    draw_button(back_rect, "Back", back_rect.collidepoint(mouse_pos))
 
 def draw_mission_select():
     # Draw background
@@ -1140,37 +1253,37 @@ def draw_mission_select():
     overlay.fill((0,0,0,120))
     screen.blit(overlay, (0,0))
     
-    title = font.render("Select Mission", True, (255,255,255))
-    screen.blit(title, (screen_width//2-title.get_width()//2, 100))
-    
     # Get mouse position for hover detection
     mouse_pos = pygame.mouse.get_pos()
-    hovered_mission = None
     
-    # Draw mission buttons and check for hover
-    for i, (text, rect) in enumerate(mission_buttons):
-        if text != "Back":  # Skip the back button
-            mission_id = i
-            r = pygame.Rect(rect)
+    # Draw back to main menu button
+    back_btn = draw_button(pygame.Rect(20, 20, 150, 40), "Back to Menu", 
+                          pygame.Rect(20, 20, 150, 40).collidepoint(mouse_pos))
+    
+    # Get the current campaign
+    current_campaign = next((c for c in campaign_buttons if c["missions"] == selected_campaign), None)
+    if current_campaign:
+        title = font.render(f"{current_campaign['name']} - Select Mission", True, (255,255,255))
+    else:
+        title = font.render("Select Mission", True, (255,255,255))
+    screen.blit(title, (screen_width//2-title.get_width()//2, 100))
+    
+    # Draw mission buttons with hover effect
+    hovered_mission = None
+    for i, mission_id in enumerate(selected_campaign):
+        if i < len(mission_buttons) - 1:  # Skip the back button
+            mission = MISSIONS[mission_id]
+            r = pygame.Rect(mission_buttons[i][1])
             is_hovered = r.collidepoint(mouse_pos)
-            
-            # Draw button with hover effect
-            color = (80, 80, 100) if is_hovered else (60, 60, 80)
-            pygame.draw.rect(screen, color, rect)
-            pygame.draw.rect(screen, (255, 255, 255), rect, 2)
-            
-            # Draw mission name
-            btn_text = font.render(text, True, (255, 255, 255))
-            screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+            draw_button(r, mission_buttons[i][0], is_hovered)
             
             if is_hovered:
                 hovered_mission = mission_id
-        else:
-            # Draw back button normally
-            pygame.draw.rect(screen, (60, 60, 80), rect)
-            pygame.draw.rect(screen, (255, 255, 255), rect, 2)
-            btn_text = font.render(text, True, (255, 255, 255))
-            screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+    
+    # Draw back to campaigns button with hover effect
+    back_to_campaigns_rect = pygame.Rect(screen_width//2-100, screen_height-100, 200, 40)
+    draw_button(back_to_campaigns_rect, "Back to Campaigns", 
+               back_to_campaigns_rect.collidepoint(mouse_pos))
     
     # Draw mission info window if hovering over a mission
     if hovered_mission is not None:
@@ -1233,6 +1346,13 @@ def draw_settings():
     overlay.fill((0,0,0,120))
     screen.blit(overlay, (0,0))
     
+    # Get mouse position for hover detection
+    mouse_pos = pygame.mouse.get_pos()
+    
+    # Draw back to main menu button
+    back_btn = draw_button(pygame.Rect(20, 20, 150, 40), "Back to Menu", 
+                          pygame.Rect(20, 20, 150, 40).collidepoint(mouse_pos))
+    
     title = font.render("Settings", True, (255,255,255))
     screen.blit(title, (screen_width//2-title.get_width()//2, 100))
     
@@ -1241,18 +1361,18 @@ def draw_settings():
     mode_display = font.render(f"Current Mode: {mode_text}", True, (255,255,255))
     screen.blit(mode_display, (screen_width//2-mode_display.get_width()//2, 150))
     
+    # Draw settings buttons with hover effect
     for text, rect in settings_buttons:
-        pygame.draw.rect(screen, (60,60,80), rect)
-        pygame.draw.rect(screen, (255,255,255), rect, 2)
-        btn_text = font.render(text, True, (255,255,255))
-        screen.blit(btn_text, (rect[0]+rect[2]//2-btn_text.get_width()//2, rect[1]+rect[3]//2-btn_text.get_height()//2))
+        is_hovered = pygame.Rect(rect).collidepoint(mouse_pos)
+        draw_button(pygame.Rect(rect), text, is_hovered)
 
 # --- Mission setup logic ---
 def setup_mission(mission_id):
     global tile_map, units, enemy_units, player_unit, tank_unit, selected_unit, action_menu_active, action_menu_pos, waiting_for_target, current_action, camera_offset_x, camera_offset_y, hex_size
     
-    # Stop the menu music
-    pygame.mixer.music.stop()
+    # Stop the video and music
+    if video_bg:
+        video_bg.stop()
     
     # Reset all state
     hex_size = base_hex_size
@@ -1409,6 +1529,7 @@ running = True
 turn_player = True
 menu_state = MENU_STATE_MAIN
 selected_mission = 0
+selected_campaign = None
 
 while running:
     if menu_state == MENU_STATE_MAIN:
@@ -1422,12 +1543,35 @@ while running:
                 for i, (text, rect) in enumerate(menu_buttons):
                     r = pygame.Rect(rect)
                     if r.collidepoint(mx, my):
-                        if text == "Select Mission":
-                            menu_state = MENU_STATE_MISSION_SELECT
+                        if text == "Select Campaign":
+                            menu_state = MENU_STATE_CAMPAIGN_SELECT
                         elif text == "Settings":
                             menu_state = MENU_STATE_SETTINGS
                         elif text == "Quit":
                             running = False
+    elif menu_state == MENU_STATE_CAMPAIGN_SELECT:
+        draw_campaign_select()
+        pygame.display.flip()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                # Check back to main menu button
+                back_btn = pygame.Rect(20, 20, 150, 40)
+                if back_btn.collidepoint(mx, my):
+                    menu_state = MENU_STATE_MAIN
+                    continue
+                # Check campaign buttons
+                for campaign in campaign_buttons:
+                    if pygame.Rect(campaign["rect"]).collidepoint(mx, my):
+                        selected_campaign = campaign["missions"]
+                        menu_state = MENU_STATE_MISSION_SELECT
+                        break
+                # Check back button
+                back_rect = pygame.Rect(screen_width//2-100, screen_height-100, 200, 40)
+                if back_rect.collidepoint(mx, my):
+                    menu_state = MENU_STATE_MAIN
     elif menu_state == MENU_STATE_MISSION_SELECT:
         draw_mission_select()
         pygame.display.flip()
@@ -1436,23 +1580,23 @@ while running:
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
-                for i, (text, rect) in enumerate(mission_buttons):
-                    r = pygame.Rect(rect)
-                    if r.collidepoint(mx, my):
-                        if text == "Mission 1":
-                            selected_mission = 0
-                            setup_mission(0)
+                # Check back to main menu button
+                back_btn = pygame.Rect(20, 20, 150, 40)
+                if back_btn.collidepoint(mx, my):
+                    menu_state = MENU_STATE_MAIN
+                    continue
+                # Check mission buttons
+                for i, mission_id in enumerate(selected_campaign):
+                    if i < len(mission_buttons) - 1:  # Skip the back button
+                        r = pygame.Rect(mission_buttons[i][1])
+                        if r.collidepoint(mx, my):
+                            setup_mission(mission_id)
                             menu_state = MENU_STATE_GAME
-                        elif text == "Mission 2":
-                            selected_mission = 1
-                            setup_mission(1)
-                            menu_state = MENU_STATE_GAME
-                        elif text == "Mission 3":
-                            selected_mission = 2
-                            setup_mission(2)
-                            menu_state = MENU_STATE_GAME
-                        elif text == "Back":
-                            menu_state = MENU_STATE_MAIN
+                            break
+                # Check back to campaigns button
+                back_to_campaigns_rect = pygame.Rect(screen_width//2-100, screen_height-100, 200, 40)
+                if back_to_campaigns_rect.collidepoint(mx, my):
+                    menu_state = MENU_STATE_CAMPAIGN_SELECT
     elif menu_state == MENU_STATE_SETTINGS:
         draw_settings()
         pygame.display.flip()
@@ -1461,6 +1605,11 @@ while running:
                 running = False
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
+                # Check back to main menu button
+                back_btn = pygame.Rect(20, 20, 150, 40)
+                if back_btn.collidepoint(mx, my):
+                    menu_state = MENU_STATE_MAIN
+                    continue
                 for i, (text, rect) in enumerate(settings_buttons):
                     r = pygame.Rect(rect)
                     if r.collidepoint(mx, my):
@@ -1476,7 +1625,7 @@ while running:
             draw_unit_info(selected_unit)
         draw_action_menu()
         end_turn_btn = draw_end_turn_button()
-        back_btn = draw_back_to_menu_button()
+        back_btn = draw_back_to_main_button()
         pygame.display.flip()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -1491,6 +1640,9 @@ while running:
                         action_menu_pos = None
                         waiting_for_target = False
                         current_action = None
+                        # Restart the video and music
+                        if video_bg:
+                            video_bg.restart()
                         continue
                     elif end_turn_btn.collidepoint(event.pos):
                         turn_player = not turn_player
