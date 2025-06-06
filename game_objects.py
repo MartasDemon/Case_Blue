@@ -131,31 +131,39 @@ class Unit:
         return True
 
     def get_status_report(self):
-        morale_status = "High" if self.morale > 70 else "Medium" if self.morale > 40 else "Low"
-        health_status = "Good" if self.health > 70 else "Fair" if self.health > 40 else "Critical"
-        accuracy_status = "Excellent" if self.accuracy > 80 else "Good" if self.accuracy > 60 else "Poor"
+        health_percentage = (self.health / self.base_health) * 100
+        morale_percentage = self.morale
         
-        status_messages = [
-            f"Unit Status: {self.name}",
-            f"Health: {health_status} ({self.health}/{self.base_health})",
-            f"Morale: {morale_status} ({self.morale}%)",
-            f"Accuracy: {accuracy_status}",
-            f"Remaining Actions: {self.agility_points}/{self.base_agility}",
-            f"Movement Range: 1 hex per AP",
-            f"Combat Range: {self.range} hexes"
-        ]
+        status_messages = []
         
-        # Add soldier count for infantry
-        if not isinstance(self, TankUnit):
-            status_messages.insert(2, f"Soldiers: {self.soldiers}/{self.base_soldiers}")
+        # Dynamic opening phrase based on health and morale
+        if health_percentage > 80 and morale_percentage > 70:
+            status_messages.append(f"Unit Report: {self.name} - Holding strong, spirits are high!")
+        elif health_percentage > 50 and morale_percentage > 50:
+            status_messages.append(f"Unit Report: {self.name} - Holding the line, morale is steady.")
+        elif health_percentage > 20 and morale_percentage > 30:
+            status_messages.append(f"Unit Report: {self.name} - Taking losses, morale is starting to waver.")
+        elif health_percentage > 0:
+            status_messages.append(f"Unit Report: {self.name} - Critically damaged, on the brink of collapse!")
+        else:
+             status_messages.append(f"Unit Report: {self.name} - Eliminated or surrendered.")
+
+        # Add specific details based on unit type and status
+        if self.health > 0:
+            if not isinstance(self, TankUnit):
+                 status_messages.append(f"  Soldiers remaining: {self.soldiers}/{self.base_soldiers}")
+            status_messages.append(f"  Health: {self.health}/{self.base_health}")
+            status_messages.append(f"  Morale: {self.morale}%")
+            status_messages.append(f"  Accuracy: {self.accuracy}%")
+            status_messages.append(f"  Remaining Actions: {self.agility_points}/{self.base_agility}")
+            status_messages.append(f"  Combat Range: {self.range} hexes")
         
-        # Only add grenade info for infantry
-        if not isinstance(self, TankUnit):
-            status_messages.extend([
-                f"Grenades: {self.grenades}",
-                f"Smoke Grenades: {self.smoke_grenades}"
-            ])
-            
+            if not isinstance(self, TankUnit):
+                status_messages.extend([
+                    f"  Grenades: {self.grenades}",
+                    f"  Smoke Grenades: {self.smoke_grenades}"
+                ])
+        
         return status_messages
 
 class InfantryUnit(Unit):
@@ -192,12 +200,13 @@ class TankUnit(Unit):
 
     def get_status_report(self):
         base_report = super().get_status_report()
-        base_report.extend([
-            f"Armor: {self.armor}",
-            f"Armor Penetration: {self.armor_penetration}",
-            f"HE Rounds: {self.he_rounds}",
-            f"APHE Rounds: {self.aphe_rounds}"
-        ])
+        if self.health > 0:
+            base_report.extend([
+                f"  Armor: {self.armor}",
+                f"  Armor Penetration: {self.armor_penetration}",
+                f"  HE Rounds: {self.he_rounds}",
+                f"  APHE Rounds: {self.aphe_rounds}"
+            ])
         return base_report
 
 class Tile:
@@ -209,12 +218,36 @@ class Tile:
         self.smoke = False
         self.smoke_turns = 0  # Track how many turns the smoke will last
 
-        if terrain_type == "Plain":
+        # Terrain effects
+        if terrain_type == "Plains":
             self.defense_bonus = 0
             self.accuracy_penalty = 0
+            self.movement_cost = 1
         elif terrain_type == "House":
             self.defense_bonus = 0.3
             self.accuracy_penalty = 0
+            self.movement_cost = 2
         elif terrain_type == "Hill":
-            self.defense_bonus = 0.1
+            self.defense_bonus = 0.2
             self.accuracy_penalty = -0.1
+            self.movement_cost = 2
+        elif terrain_type == "Forest":
+            self.defense_bonus = 0.15
+            self.accuracy_penalty = 0.2
+            self.movement_cost = 2
+        elif terrain_type == "Road":
+            self.defense_bonus = 0
+            self.accuracy_penalty = 0
+            self.movement_cost = 0.5
+        elif terrain_type == "River":
+            self.defense_bonus = 0
+            self.accuracy_penalty = 0
+            self.movement_cost = 999  # Cannot move through river
+        elif terrain_type == "Bridge":
+            self.defense_bonus = -0.1  # Negative defense bonus (more vulnerable)
+            self.accuracy_penalty = 0
+            self.movement_cost = 1
+        else:
+            self.defense_bonus = 0
+            self.accuracy_penalty = 0
+            self.movement_cost = 1

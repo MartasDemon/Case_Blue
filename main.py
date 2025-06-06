@@ -17,7 +17,10 @@ TERRAIN_COLORS.update({
 
 IMAGE_PATHS = {
     "ger_infantry": ["images/ger_infantry1.jpg", "images/ger_infantry2.jpg"],
-    "ger_tank": "images/ger_stug1.jpg"
+    "ger_tank": "sprites/ger_tank.png",
+    "soldier": "sprites/ger_soldier.png",
+    "rus_tank": ["images/rus_tank1.jpg","images/rus_tank2.jpg"],
+    "rus_infantry": ["images/rus_infantry1.jpg", "images/rus_infantry2.jpg", "images/rus_infantry3.jpg"]
 }
 
 # === UI CONSTANTS ===
@@ -79,21 +82,83 @@ pygame.display.set_caption("Hex Strategy Game")
 font = pygame.font.SysFont(None, 24)
 clock = pygame.time.Clock()
 
+# === MAP GENERATION ===
+MAP_RADIUS = 8
+base_hex_size = 40
+hex_size = base_hex_size
+tile_map = {}
+for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
+    for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
+        if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
+            terrain = random.choice(TERRAIN_TYPES)
+            tile_map[(q, r)] = Tile(q, r, terrain)
+
+# === IMAGE UTILS ===
+def get_available_unit_images(unit_type):
+    """Find all available images for a specific unit type."""
+    if unit_type in IMAGE_PATHS:
+        if isinstance(IMAGE_PATHS[unit_type], list):
+            return IMAGE_PATHS[unit_type]
+        return [IMAGE_PATHS[unit_type]]
+    return []
+
+def assign_unit_image(unit):
+    """Assign a random appropriate image to a unit based on its type."""
+    # Get the base image key (e.g., rus_infantry for Russian Infantry)
+    if isinstance(unit, InfantryUnit):
+        if "Russian" in unit.name:
+            base_key = "rus_infantry"
+        else:
+            base_key = "ger_infantry"
+    else:  # TankUnit
+        if "Russian" in unit.name:
+            base_key = "rus_tank"
+        else:
+            base_key = "ger_tank"
+    
+    # Get all available images for this unit type
+    available_images = get_available_unit_images(base_key)
+    
+    if available_images:
+        # Randomly select an image
+        selected_image = random.choice(available_images)
+        # Store the selected image path in the unit
+        unit.image_path = selected_image
+        # Update the unit's image key
+        unit.image_key = base_key
+    else:
+        # Fallback to default image key if no specific images found
+        unit.image_key = base_key
+        unit.image_path = None
+
 # === LOAD IMAGES ===
 images = {}
 for key, paths in IMAGE_PATHS.items():
     if isinstance(paths, list):
-        # For infantry, randomly choose one of the two images
-        path = random.choice(paths)
+        # For infantry, load all images
+        for path in paths:
+            if os.path.exists(path):
+                img = pygame.image.load(path)
+                if key in ["soldier", "ger_tank"]:
+                    # Scale soldier and tank images to a smaller size (about 90% of hex size)
+                    img = pygame.transform.scale(img, (int(hex_size * 0.9), int(hex_size * 0.9)))
+                else:
+                    img = pygame.transform.scale(img, (200, 150))
+                # Store the image with its full path as the key
+                images[path] = img
     else:
-        path = paths
-        
-    if os.path.exists(path):
-        img = pygame.image.load(path)
-        img = pygame.transform.scale(img, (200, 150))
-        images[key] = img
-    else:
-        print(f"Missing image: {path}")
+        if os.path.exists(paths):
+            img = pygame.image.load(paths)
+            if key in ["soldier", "ger_tank"]:
+                # Scale soldier and tank images to a smaller size (about 90% of hex size)
+                img = pygame.transform.scale(img, (int(hex_size * 0.9), int(hex_size * 0.9)))
+            else:
+                img = pygame.transform.scale(img, (200, 150))
+            # Store the image with both the key and the path
+            images[key] = img
+            images[paths] = img
+        else:
+            print(f"Missing image: {paths}")
 
 # Create a simple gradient background
 def create_gradient_background():
@@ -211,17 +276,6 @@ else:
     print(f"Warning: Video file not found at {video_path}")
     video_bg = None
 
-# === MAP GENERATION ===
-MAP_RADIUS = 8
-base_hex_size = 40
-hex_size = base_hex_size
-tile_map = {}
-for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
-    for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
-        if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
-            terrain = random.choice(TERRAIN_TYPES)
-            tile_map[(q, r)] = Tile(q, r, terrain)
-
 # === PLAYER UNIT ===
 units = []
 player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
@@ -278,7 +332,8 @@ menu_buttons = [
 mission_buttons = [
     ("Mission 1", (screen_width//2-100, screen_height//2-40, 200, 50)),
     ("Mission 2", (screen_width//2-100, screen_height//2+20, 200, 50)),
-    ("Back", (screen_width//2-100, screen_height//2+80, 200, 40)),
+    ("Mission 3", (screen_width//2-100, screen_height//2+80, 200, 50)),
+    ("Back", (screen_width//2-100, screen_height//2+140, 200, 40)),
 ]
 settings_buttons = [
     ("Toggle Fullscreen", (screen_width//2-100, screen_height//2-40, 200, 50)),
@@ -300,6 +355,23 @@ MISSIONS = {
         "description": "Advance through enemy territory. Capture key strategic positions and eliminate enemy resistance.",
         "player_pos": (-2, 2),
         "tank_pos": (-1, 2)
+    },
+    2: {
+        "name": "Soviet Counteroffensive - Mission 1",
+        "date": "July 15, 1942",
+        "description": "Lead the Soviet counterattack through the dense forests. Eliminate German positions and secure the area.",
+        "player_pos": (0, 0),
+        "tank_pos": (1, 0),
+        "is_russian": True,
+        "additional_units": [
+            {"type": "infantry", "pos": (-1, 1)},
+            {"type": "tank", "pos": (1, -1)}
+        ],
+        "enemy_units": [
+            {"type": "infantry", "pos": (3, 3)},
+            {"type": "infantry", "pos": (4, 2)},
+            {"type": "tank", "pos": (3, 2)}
+        ]
     }
 }
 
@@ -441,7 +513,7 @@ def draw_map():
     tile_rects = {}
     for (q, r), tile in tile_map.items():
         color = TERRAIN_COLORS[tile.terrain_type]
-        if tile.smoke:
+        if tile.smoke and tile.smoke_turns > 0:  # Only show smoke if it has turns remaining
             color = (255, 255, 255)  # White color for smoke
         rect = draw_hex(q, r, color, hex_size, screen)
         tile_rects[(q, r)] = rect
@@ -449,8 +521,30 @@ def draw_map():
             cx, cy = hex_to_pixel(q, r, hex_size)
             cx += camera_offset_x
             cy += camera_offset_y
-            color = (255, 255, 0) if not tile.unit.is_enemy else (255, 0, 0)
-            pygame.draw.circle(screen, color, (int(cx), int(cy)), max(8, int(hex_size / 4)), 3)
+            if not tile.unit.is_enemy:
+                if isinstance(tile.unit, InfantryUnit):
+                    # Draw soldier sprite for German infantry, blue circle for Russian
+                    if "German" in tile.unit.name:
+                        if "soldier" in images:
+                            soldier_img = images["soldier"]
+                            soldier_rect = soldier_img.get_rect(center=(int(cx), int(cy)))
+                            screen.blit(soldier_img, soldier_rect)
+                    else:
+                        # Draw blue circle for Russian infantry
+                        pygame.draw.circle(screen, (0, 0, 255), (int(cx), int(cy)), max(8, int(hex_size / 4)), 3)
+                else:
+                    # Draw tank sprite for German tank, blue circle for Russian
+                    if "German" in tile.unit.name:
+                        if "ger_tank" in images:
+                            tank_img = images["ger_tank"]
+                            tank_rect = tank_img.get_rect(center=(int(cx), int(cy)))
+                            screen.blit(tank_img, tank_rect)
+                    else:
+                        # Draw blue circle for Russian tank
+                        pygame.draw.circle(screen, (0, 0, 255), (int(cx), int(cy)), max(8, int(hex_size / 4)), 3)
+            else:
+                # Draw red circle for enemy units
+                pygame.draw.circle(screen, (255, 0, 0), (int(cx), int(cy)), max(8, int(hex_size / 4)), 3)
             
             # Draw action indicator if unit is selected and waiting for target
             if tile.unit == selected_unit and waiting_for_target:
@@ -574,9 +668,8 @@ def draw_bottom_panel():
 
 def draw_unit_info(unit):
     # Draw unit image
-    image_key = "ger_infantry" if isinstance(unit, InfantryUnit) else "ger_tank"
-    if image_key in images:
-        screen.blit(images[image_key], (20, screen_height - BOTTOM_PANEL_HEIGHT + 10))
+    if unit.image_path and unit.image_path in images:
+        screen.blit(images[unit.image_path], (20, screen_height - BOTTOM_PANEL_HEIGHT + 10))
     
     # Draw unit status
     status_messages = unit.get_status_report()
@@ -776,17 +869,31 @@ def throw_grenade(unit, target_tile):
             adjacent_tile = tile_map[(nq, nr)]
             if adjacent_tile.unit:
                 damage = unit.base_damage * 1.5  # Grenades deal 50% more damage
+                initial_health = adjacent_tile.unit.health
+                initial_soldiers = adjacent_tile.unit.soldiers if hasattr(adjacent_tile.unit, 'soldiers') else None
                 adjacent_tile.unit.health -= int(damage)
-                units_hit.append(adjacent_tile.unit)
-                if adjacent_tile.unit.health <= 0:
-                    message_log.add_message(f"{unit.name} throws a grenade! The blast eliminates {adjacent_tile.unit.name}!")
+                units_hit.append((adjacent_tile.unit, initial_health, initial_soldiers))
+                
+                # Calculate soldiers lost (even if unit is eliminated)
+                soldiers_lost = 0
+                if initial_soldiers is not None:
+                    soldiers_lost = initial_soldiers - (adjacent_tile.unit.soldiers if adjacent_tile.unit else 0) # Check if unit still exists for soldier count
+
+                # Create detailed damage message
+                damage_message = f"{unit.name} throws a grenade! {adjacent_tile.unit.name if adjacent_tile.unit else 'Target'} takes {int(damage)} damage"
+                if soldiers_lost > 0:
+                    damage_message += f" and loses {soldiers_lost} soldiers"
+                message_log.add_message(damage_message)
+
+                if adjacent_tile.unit and adjacent_tile.unit.health <= 0:
+                    message_log.add_message(f"{adjacent_tile.unit.name} has been eliminated!")
                     adjacent_tile.unit = None
-                else:
+                elif adjacent_tile.unit:
                     # Reduce morale of surviving units
                     morale_loss = random.randint(5, 15)
                     adjacent_tile.unit.morale = max(0, adjacent_tile.unit.morale - morale_loss)
-                    message_log.add_message(f"{unit.name} throws a grenade! {adjacent_tile.unit.name} takes {int(damage)} damage and loses {morale_loss} morale!")
-    
+                    message_log.add_message(f"{adjacent_tile.unit.name}'s morale drops by {morale_loss}%! (Current Morale: {adjacent_tile.unit.morale}%)")
+
     unit.grenades -= 1
     unit.agility_points -= 2
     return True
@@ -840,7 +947,6 @@ def handle_tile_click(pos, tile_rects):
                 target_tile = tile_map[(q, r)]
                 if current_action == "grenade":
                     if selected_unit.throw_grenade(target_tile):
-                        message_log.add_message(f"{selected_unit.name} throws a grenade at {target_tile.unit.name if target_tile.unit else 'empty space'}!")
                         waiting_for_target = False
                         current_action = None
                     else:
@@ -1180,7 +1286,7 @@ def setup_mission(mission_id):
                         terrain = "Plains"
                     tile_map[(q, r)] = Tile(q, r, terrain)
     
-    else:  # Hill-based mission
+    elif mission_id == 1:  # Hill-based mission
         # Create a hill-based layout with some plains
         for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
             for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
@@ -1196,28 +1302,88 @@ def setup_mission(mission_id):
                         terrain = "Plains"
                     tile_map[(q, r)] = Tile(q, r, terrain)
     
+    else:  # Forest-based Russian mission
+        # Create a dense forest layout with some clearings
+        for q in range(-MAP_RADIUS, MAP_RADIUS + 1):
+            for r in range(-MAP_RADIUS, MAP_RADIUS + 1):
+                if -q - r >= -MAP_RADIUS and -q - r <= MAP_RADIUS:
+                    # Create some clearings
+                    if abs(q) <= 1 and abs(r) <= 1:
+                        terrain = "Plains"
+                    # Create some hills
+                    elif (abs(q) == 3 and abs(r) <= 2) or (abs(r) == 3 and abs(q) <= 2):
+                        terrain = "Hill"
+                    # Rest is forest
+                    else:
+                        terrain = "Forest"
+                    tile_map[(q, r)] = Tile(q, r, terrain)
+    
     # Place player units
-    player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
-    player_unit.q, player_unit.r = mission["player_pos"]
-    player_unit.set_tile_map(tile_map)
-    tile_map[mission["player_pos"]].unit = player_unit
-    units.append(player_unit)
-    
-    tank_unit = TankUnit("German Tank", 200, 40, 80, 3, 5, "ger_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
-    tank_unit.q, tank_unit.r = mission["tank_pos"]
-    tank_unit.set_tile_map(tile_map)
-    tile_map[mission["tank_pos"]].unit = tank_unit
-    units.append(tank_unit)
-    
-    # Place enemy unit
-    enemy_unit = InfantryUnit("Russian Infantry", 100, 20, 60, 4, 10, "ger_infantry", range_=1, is_enemy=True)
-    for (q, r), tile in tile_map.items():
-        if tile.unit is None and abs(q) + abs(r) > 8:
-            tile.unit = enemy_unit
-            enemy_unit.q, enemy_unit.r = q, r
-            enemy_unit.set_tile_map(tile_map)
-            enemy_units.append(enemy_unit)
-            break
+    if mission.get("is_russian", False):
+        # Russian units (using basic circle for sprites)
+        player_unit = InfantryUnit("Russian Infantry", 100, 20, 70, 5, 10, "rus_infantry", range_=1, is_enemy=False)
+        player_unit.q, player_unit.r = mission["player_pos"]
+        player_unit.set_tile_map(tile_map)
+        tile_map[mission["player_pos"]].unit = player_unit
+        assign_unit_image(player_unit)  # Assign random appropriate image
+        units.append(player_unit)
+        
+        tank_unit = TankUnit("Russian Tank", 200, 40, 80, 3, 5, "rus_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
+        tank_unit.q, tank_unit.r = mission["tank_pos"]
+        tank_unit.set_tile_map(tile_map)
+        tile_map[mission["tank_pos"]].unit = tank_unit
+        assign_unit_image(tank_unit)  # Assign random appropriate image
+        units.append(tank_unit)
+        
+        # Add additional Russian units
+        for unit_data in mission["additional_units"]:
+            if unit_data["type"] == "infantry":
+                unit = InfantryUnit("Russian Infantry", 100, 20, 70, 5, 10, "rus_infantry", range_=1, is_enemy=False)
+            else:  # tank
+                unit = TankUnit("Russian Tank", 200, 40, 80, 3, 5, "rus_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
+            unit.q, unit.r = unit_data["pos"]
+            unit.set_tile_map(tile_map)
+            tile_map[unit_data["pos"]].unit = unit
+            assign_unit_image(unit)  # Assign random appropriate image
+            units.append(unit)
+        
+        # Place German enemy units (using German sprites)
+        for unit_data in mission["enemy_units"]:
+            if unit_data["type"] == "infantry":
+                unit = InfantryUnit("German Infantry", 100, 20, 60, 4, 10, "ger_infantry", range_=1, is_enemy=True)
+            else:  # tank
+                unit = TankUnit("German Tank", 200, 40, 80, 3, 5, "ger_tank", range_=2, armor=50, armor_penetration=30, is_enemy=True)
+            unit.q, unit.r = unit_data["pos"]
+            unit.set_tile_map(tile_map)
+            tile_map[unit_data["pos"]].unit = unit
+            assign_unit_image(unit)  # Assign random appropriate image
+            enemy_units.append(unit)
+    else:
+        # German units (original missions)
+        player_unit = InfantryUnit("German Infantry", 100, 20, 70, 5, 10, "ger_infantry", range_=1, is_enemy=False)
+        player_unit.q, player_unit.r = mission["player_pos"]
+        player_unit.set_tile_map(tile_map)
+        tile_map[mission["player_pos"]].unit = player_unit
+        assign_unit_image(player_unit)  # Assign random appropriate image
+        units.append(player_unit)
+        
+        tank_unit = TankUnit("German Tank", 200, 40, 80, 3, 5, "ger_tank", range_=2, armor=50, armor_penetration=30, is_enemy=False)
+        tank_unit.q, tank_unit.r = mission["tank_pos"]
+        tank_unit.set_tile_map(tile_map)
+        tile_map[mission["tank_pos"]].unit = tank_unit
+        assign_unit_image(tank_unit)  # Assign random appropriate image
+        units.append(tank_unit)
+        
+        # Place enemy unit (Russian)
+        enemy_unit = InfantryUnit("Russian Infantry", 100, 20, 60, 4, 10, "rus_infantry", range_=1, is_enemy=True)
+        for (q, r), tile in tile_map.items():
+            if tile.unit is None and abs(q) + abs(r) > 8:
+                tile.unit = enemy_unit
+                enemy_unit.q, enemy_unit.r = q, r
+                enemy_unit.set_tile_map(tile_map)
+                assign_unit_image(enemy_unit)  # Assign random appropriate image
+                enemy_units.append(enemy_unit)
+                break
     
     # Reset game state
     selected_unit = None
@@ -1281,6 +1447,10 @@ while running:
                             selected_mission = 1
                             setup_mission(1)
                             menu_state = MENU_STATE_GAME
+                        elif text == "Mission 3":
+                            selected_mission = 2
+                            setup_mission(2)
+                            menu_state = MENU_STATE_GAME
                         elif text == "Back":
                             menu_state = MENU_STATE_MAIN
     elif menu_state == MENU_STATE_SETTINGS:
@@ -1335,6 +1505,9 @@ while running:
                                     tile.smoke_turns -= 1
                                     if tile.smoke_turns <= 0:
                                         tile.smoke = False
+                                        # Remove smoke_affected status from any unit in this tile
+                                        if tile.unit:
+                                            tile.unit.smoke_affected = False
                         else:
                             ai_turn()
                     elif turn_player:
