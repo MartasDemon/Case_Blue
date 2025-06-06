@@ -744,33 +744,33 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
     damage = attacker.base_damage
     
     # Calculate base hit chance based on unit stats
-    base_hit_chance = attacker.accuracy
+    base_hit_chance = attacker.accuracy * 1.2  # Increase base accuracy by 20%
     
     # Apply terrain modifiers to hit chance
     terrain_modifiers = {
-        "House": 0.7,  # Units in houses are harder to hit
-        "Hill": 0.8,   # Units on hills are harder to hit
-        "Forest": 0.75, # Units in forests are harder to hit
-        "Bridge": 1.3,  # Units on bridges are easier to hit
-        "Plains": 1.0,  # Normal hit chance on plains
-        "Road": 1.0,    # Normal hit chance on roads
-        "River": 0.0,   # Can't hit units in river (they can't be there anyway)
+        "House": 0.8,    # Units in houses are harder to hit (was 0.7)
+        "Hill": 0.85,    # Units on hills are harder to hit (was 0.8)
+        "Forest": 0.8,   # Units in forests are harder to hit (was 0.75)
+        "Bridge": 1.3,   # Units on bridges are easier to hit
+        "Plains": 1.0,   # Normal hit chance on plains
+        "Road": 1.0,     # Normal hit chance on roads
+        "River": 0.0,    # Can't hit units in river (they can't be there anyway)
     }
     
     # Apply terrain modifier to hit chance
     hit_chance = base_hit_chance * terrain_modifiers.get(tile.terrain_type, 1.0)
     
     # Apply morale modifier to hit chance (higher morale = better accuracy)
-    morale_modifier = 0.5 + (attacker.morale / 200)  # 0.5 to 1.5 range
+    morale_modifier = 0.6 + (attacker.morale / 200)  # 0.6 to 1.6 range (was 0.5 to 1.5)
     hit_chance *= morale_modifier
     
-    # Apply range penalty
+    # Apply range penalty (reduced penalty)
     if distance > 1:
-        hit_chance *= (1 - (distance - 1) * 0.2)  # 20% penalty per hex of distance
+        hit_chance *= (1 - (distance - 1) * 0.15)  # 15% penalty per hex of distance (was 20%)
     
-    # Apply smoke effects
+    # Apply smoke effects (reduced penalty)
     if defender.smoke_affected:
-        hit_chance *= 0.5
+        hit_chance *= 0.6  # 40% penalty (was 50%)
     
     # Roll for hit
     hit_roll = random.randint(1, 100)
@@ -812,12 +812,12 @@ def calculate_damage(attacker, defender, tile, ammo_type=None, distance=1):
     # Apply armor reduction
     damage *= (1 - (armor_reduction / 100))
     
-    # Apply range damage reduction for infantry
+    # Apply range damage reduction for infantry (reduced penalty)
     if isinstance(attacker, InfantryUnit):
         if distance == 2:
-            damage *= 0.8
+            damage *= 0.85  # 15% reduction (was 20%)
         elif distance == 3:
-            damage *= 0.6
+            damage *= 0.7   # 30% reduction (was 40%)
     
     # Reduce defender's morale based on damage taken
     morale_loss = int(damage / 5)  # 1 morale loss per 5 damage
